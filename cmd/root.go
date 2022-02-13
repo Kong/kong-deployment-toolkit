@@ -28,13 +28,13 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
 	"io"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"log"
 	"os"
 	"strings"
-
-	"github.com/spf13/cobra"
 
 	"fmt"
 
@@ -47,7 +47,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	// netv1 "k8s.io/api/networking/v1"
-	// metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -234,24 +234,26 @@ func runDocker() error {
 }
 
 func getAPIDumps(endpoint, apiKey string) (map[string]string, error) {
+	// https://github.com/Kong/deck/blob/main/dump/dump.go#L244
 	return map[string]string{"": ""}, nil
 }
 
 func runKubernetes() error {
-	var kongK8sPods []string
+	ctx := context.Background()
+	var kongK8sPods []corev1.Pod
 	var filesToZip []string
 
 	kubeClient, err := createClient()
 	if err != nil {
 		return err
 	}
-	pl, err := kubeClient.CoreV1().Pods("").List(context.Background(), v1.ListOptions{})
+	pl, err := kubeClient.CoreV1().Pods("").List(ctx, v1.ListOptions{})
 	for _, p := range pl.Items {
 		if strings.Contains(p.Name, "kong") {
-			kongK8sPods = append(kongK8sPods, p.Name)
+			kongK8sPods = append(kongK8sPods, p)
 		}
 	}
-
+	getPodLogs(ctx, kubeClient, kongK8sPods)
 	writeFiles(filesToZip)
 
 	return nil
@@ -308,46 +310,44 @@ func createClient() (kubernetes.Interface, error) {
 	return client, nil
 }
 
-// func GetPodLogs(namespace string, podName string) {
-// 	pod, err := clientSet.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
-// 	if err != nil {
-// 		return err
-// 	}
-// 	wg := &sync.WaitGroup{}
-// 	functionList := []func(){}
-// 	for _, container := range append(pod.Spec.InitContainers, pod.Spec.Containers...) {
-// 		podLogOpts := v1.PodLogOptions{}
-// 		podLogOpts.Follow = true
-// 		podLogOpts.TailLines = &[]int64{int64(100)}[0]
-// 		podLogOpts.Container = container.Name
-// 		podLogs, err := clientSet.CoreV1().Pods(namespace).GetLogs(podName, &podLogOpts).Stream(ctx)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		defer podLogs.Close()
-// 		functionList = append(functionList, func() {
-// 			defer wg.Done()
-// 			reader := bufio.NewScanner(podLogs)
-// 			for reader.Scan() {
-// 				select {
-// 				case <-ctx.Done():
-// 					return
-// 				default:
-// 					line := reader.Text()
-// 					fmt.Println(worker+"/"+podLogOpts.Container, line)
-// 				}
-// 			}
-// 			log.Printf("INFO log EOF " + reader.Err().Error() + ": " + worker + "/" + podLogOpts.Container)
-// 		})
-// 	}
+func getPodLogs(ctx context.Context, clientSet kubernetes.Interface, podList []corev1.Pod) error {
+	for _, pod := range podList {
+		p, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		for _, container := range append(p.Spec.InitContainers, p.Spec.Containers...) {
+			podLogOpts := corev1.PodLogOptions{}
+			podLogOpts.Follow = true
+			podLogOpts.TailLines = &[]int64{int64(100)}[0]
+			podLogOpts.Container = container.Name
+			podLogs, err := clientSet.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &podLogOpts).Stream(ctx)
+			if err != nil {
+				return err
+			}
+			defer podLogs.Close()
+			buf := new(bytes.Buffer)
+			_, err = io.Copy(buf, podLogs)
+			if err != nil {
+				return "error in copy information from podLogs to buf"
+			}
+			str := buf.String()
 
-// 	wg.Add(len(functionList))
-// 	for _, f := range functionList {
-// 		go f()
-// 	}
-// 	wg.Wait()
-// 	return nil
-// }
+			logsFilename := fmt.Sprintf("docker-logs-%s.log", sanitizedImageName)
+			logFile, err := os.Create(logsFilename)
+			if err != nil {
+				panic(err)
+			}
+
+			defer logFile.Close()
+			_, err = io.Copy(logFile, logs)
+			filesToZip = append(filesToZip, logsFilename)
+
+		}
+
+	}
+	return nil
+}
 
 func writeFiles(filesToWrite []string) error {
 	output, err := os.Create("output.tar.gz")

@@ -27,19 +27,19 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"log"
+	"k8s.io/apimachinery/pkg/runtime"
+	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"os"
 	"strings"
-
-	"fmt"
-
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
 
 	// kongv1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1"
 	// kongv1beta1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1beta1"
@@ -56,7 +56,16 @@ const (
 	VM         = "vm"
 )
 
-var rType string
+var (
+	rType      string
+	kongImages []string
+	meshImages []string
+)
+
+var (
+	defaultKongImageList = []string{"kong-gateway", "kubernetes-ingress-controller"}
+	defaultMeshImageList = []string{"kuma-dp", "kuma-cp", "kuma-init"}
+)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -68,6 +77,7 @@ examples and usage of using your application. For example:
 Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
+	PreRun: toggleDebug,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -102,15 +112,10 @@ func Execute() {
 }
 
 func init() {
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-
-	rootCmd.PersistentFlags().StringVar(&rType, "runtime", "", "")
-
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	//rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "verbose logging")
+	rootCmd.PersistentFlags().StringVarP(&rType, "runtime", "r", "", "runtime")
+	rootCmd.PersistentFlags().StringSliceVarP(&kongImages, "gateway-images", "g", defaultKongImageList, "kong images")
+	rootCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, "mesh images")
 }
 
 func formatJSON(data []byte) ([]byte, error) {
@@ -123,6 +128,7 @@ func formatJSON(data []byte) ([]byte, error) {
 }
 
 func guessRuntime() (string, error) {
+	log.Debug("trying to guess runtime...")
 	var errList []string
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -135,16 +141,18 @@ func guessRuntime() (string, error) {
 		errList = append(errList, err.Error())
 	}
 
-	var kongDockerContainers []types.Container
+	var kongContainers []types.Container
 
 	for _, container := range containers {
-		if strings.Contains(container.Image, "kong") {
-			kongDockerContainers = append(kongDockerContainers, container)
+		for _, i := range kongImages {
+			if strings.Contains(container.Image, i) {
+				kongContainers = append(kongContainers, container)
+			}
 		}
 	}
 
-	if len(kongDockerContainers) > 0 {
-		fmt.Println("Found Docker!")
+	if len(kongContainers) > 0 {
+		log.Debug("found Docker")
 		return Docker, nil
 	}
 
@@ -153,13 +161,17 @@ func guessRuntime() (string, error) {
 	kubeClient, err := createClient()
 	pl, err := kubeClient.CoreV1().Pods("").List(context.Background(), v1.ListOptions{})
 	for _, p := range pl.Items {
-		if strings.Contains(p.Name, "kong") {
-			kongK8sPods = append(kongK8sPods, p.Name)
+		for _, c := range p.Spec.Containers {
+			for _, i := range append(kongImages, meshImages...) {
+				if strings.Contains(c.Image, i) {
+					kongK8sPods = append(kongK8sPods, p.Name)
+				}
+			}
 		}
 	}
 
 	if len(kongK8sPods) > 0 {
-		fmt.Println("Found Kubernetes!")
+		log.Debug("found Kubernetes")
 		return Kubernetes, nil
 	}
 
@@ -181,8 +193,10 @@ func runDocker() error {
 	var kongContainers []types.Container
 
 	for _, container := range containers {
-		if strings.Contains(container.Image, "kong") {
-			kongContainers = append(kongContainers, container)
+		for _, i := range append(kongImages, meshImages...) {
+			if strings.Contains(container.Image, i) {
+				kongContainers = append(kongContainers, container)
+			}
 		}
 	}
 
@@ -193,42 +207,63 @@ func runDocker() error {
 		if err != nil {
 			return err
 		}
+
 		prettyJSON, err := formatJSON(b)
 		if err != nil {
 			return err
 		}
 
 		sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(c.Image, ":", "/"), "/", "-")
-
-		inspectFilename := fmt.Sprintf("docker-inspect-%s.log", sanitizedImageName)
-
+		sanitizedContainerName := strings.ReplaceAll(c.Names[0], "/", "")
+		inspectFilename := fmt.Sprintf("%s-%s.json", sanitizedContainerName, sanitizedImageName)
 		inspectFile, err := os.Create(inspectFilename)
 		if err != nil {
-			panic(err)
+			return err
 		}
-		defer inspectFile.Close()
+
+		log.Debugf("writing docker inspect data for %s", sanitizedContainerName)
 		_, err = io.Copy(inspectFile, bytes.NewReader(prettyJSON))
+		if err != nil {
+			return err
+		}
+
+		err = inspectFile.Close()
+		if err != nil {
+			return err
+		}
 		filesToZip = append(filesToZip, inspectFilename)
 
 		options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true}
-		// Replace this ID with a container that really exists
 		logs, err := cli.ContainerLogs(ctx, c.ID, options)
 		if err != nil {
-			panic(err)
+			return err
 		}
 
-		logsFilename := fmt.Sprintf("docker-logs-%s.log", sanitizedImageName)
+		logsFilename := fmt.Sprintf("%s-%s.log", sanitizedContainerName, sanitizedImageName)
 		logFile, err := os.Create(logsFilename)
 		if err != nil {
-			panic(err)
+			return err
 		}
 
-		defer logFile.Close()
+		log.Debugf("writing docker logs data for %s", sanitizedContainerName)
 		_, err = io.Copy(logFile, logs)
+		if err != nil {
+			return err
+		}
+
+		err = logFile.Close()
+		if err != nil {
+			return err
+		}
+
 		filesToZip = append(filesToZip, logsFilename)
 	}
 
-	writeFiles(filesToZip)
+	log.Debugf("writing tar.gz output")
+	err = writeFiles(filesToZip)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -249,12 +284,24 @@ func runKubernetes() error {
 	}
 	pl, err := kubeClient.CoreV1().Pods("").List(ctx, v1.ListOptions{})
 	for _, p := range pl.Items {
-		if strings.Contains(p.Name, "kong") {
-			kongK8sPods = append(kongK8sPods, p)
+		for _, c := range p.Spec.Containers {
+			for _, i := range append(kongImages, meshImages...) {
+				if strings.Contains(c.Image, i) {
+					kongK8sPods = append(kongK8sPods, p)
+				}
+			}
 		}
 	}
-	getPodLogs(ctx, kubeClient, kongK8sPods)
-	writeFiles(filesToZip)
+	logFilenames, err := writePodDetails(ctx, kubeClient, kongK8sPods)
+	if err != nil {
+		return err
+	}
+	filesToZip = append(filesToZip, logFilenames...)
+
+	err = writeFiles(filesToZip)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -263,34 +310,6 @@ func runVM() error {
 
 	return nil
 }
-
-// func getPodLogs(pod corev1.Pod) string {
-// 	podLogOpts := corev1.PodLogOptions{}
-// 	config, err := rest.InClusterConfig()
-// 	if err != nil {
-// 		return "error in getting config"
-// 	}
-// 	// creates the clientset
-// 	clientset, err := kubernetes.NewForConfig(config)
-// 	if err != nil {
-// 		return "error in getting access to K8S"
-// 	}
-// 	req := clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &podLogOpts)
-// 	podLogs, err := req.Stream()
-// 	if err != nil {
-// 		return "error in opening stream"
-// 	}
-// 	defer podLogs.Close()
-
-// 	buf := new(bytes.Buffer)
-// 	_, err = io.Copy(buf, podLogs)
-// 	if err != nil {
-// 		return "error in copy information from podLogs to buf"
-// 	}
-// 	str := buf.String()
-
-// 	return str
-// }
 
 func createClient() (kubernetes.Interface, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
@@ -302,65 +321,104 @@ func createClient() (kubernetes.Interface, error) {
 		return nil, errors.Wrap(err, "error finding Kubernetes API server config in --kubeconfig, $KUBECONFIG, or in-cluster configuration")
 	}
 
-	client, err := kubernetes.NewForConfig(clientConfig)
+	clientSet, err := kubernetes.NewForConfig(clientConfig)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create a client: %v", err)
 	}
 
-	return client, nil
+	return clientSet, nil
 }
 
-func getPodLogs(ctx context.Context, clientSet kubernetes.Interface, podList []corev1.Pod) error {
+func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podList []corev1.Pod) ([]string, error) {
+	var logFilenames []string
 	for _, pod := range podList {
 		p, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 		if err != nil {
-			return err
+			return logFilenames, err
 		}
 		for _, container := range append(p.Spec.InitContainers, p.Spec.Containers...) {
-			podLogOpts := corev1.PodLogOptions{}
-			podLogOpts.Follow = true
-			podLogOpts.TailLines = &[]int64{int64(100)}[0]
-			podLogOpts.Container = container.Name
+			podLogOpts := corev1.PodLogOptions{Container: container.Name}
+			// podLogOpts.TailLines = &[]int64{int64(100)}[0]
 			podLogs, err := clientSet.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &podLogOpts).Stream(ctx)
 			if err != nil {
-				return err
+				return logFilenames, err
 			}
-			defer podLogs.Close()
-			buf := new(bytes.Buffer)
-			_, err = io.Copy(buf, podLogs)
-			if err != nil {
-				return "error in copy information from podLogs to buf"
-			}
-			str := buf.String()
 
-			logsFilename := fmt.Sprintf("docker-logs-%s.log", sanitizedImageName)
+			sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(container.Image, ":", "/"), "/", "-")
+			logsFilename := fmt.Sprintf("%s-%s.log", pod.Name, sanitizedImageName)
+
 			logFile, err := os.Create(logsFilename)
 			if err != nil {
 				panic(err)
 			}
 
-			defer logFile.Close()
-			_, err = io.Copy(logFile, logs)
-			filesToZip = append(filesToZip, logsFilename)
+			_, err = io.Copy(logFile, podLogs)
+			if err != nil {
+				return logFilenames, err
+			}
 
+			err = podLogs.Close()
+			if err != nil {
+				return logFilenames, err
+			}
+
+			err = logFile.Close()
+			if err != nil {
+				return logFilenames, err
+			}
+
+			logFilenames = append(logFilenames, logsFilename)
 		}
-
+		podDefFileName := fmt.Sprintf("%s.yaml", p.Name)
+		podDefFile, err := os.Create(podDefFileName)
+		if err != nil {
+			panic(err)
+		}
+		buf := bytes.NewBufferString("")
+		pod.TypeMeta = metav1.TypeMeta{
+			Kind:       "Pod",
+			APIVersion: "v1",
+		}
+		scheme := runtime.NewScheme()
+		serializer := kjson.NewSerializerWithOptions(kjson.DefaultMetaFactory, scheme, scheme, kjson.SerializerOptions{
+			Pretty: true,
+			Yaml:   true,
+			Strict: true,
+		})
+		err = serializer.Encode(&pod, buf)
+		_, err = io.Copy(podDefFile, buf)
+		if err != nil {
+			return logFilenames, err
+		}
+		logFilenames = append(logFilenames, podDefFileName)
 	}
-	return nil
+	return logFilenames, nil
 }
 
 func writeFiles(filesToWrite []string) error {
 	output, err := os.Create("output.tar.gz")
 	if err != nil {
-		log.Fatalln("Error writing archive:", err)
+		return err
 	}
-	defer output.Close()
+	defer func() {
+		if tempErr := output.Close(); tempErr != nil {
+			err = tempErr
+		}
+	}()
 
 	// Create the archive and write the output to the "out" Writer
 	gw := gzip.NewWriter(output)
-	defer gw.Close()
+	defer func() {
+		if tempErr := gw.Close(); tempErr != nil {
+			err = tempErr
+		}
+	}()
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
+	defer func() {
+		if tempErr := tw.Close(); tempErr != nil {
+			err = tempErr
+		}
+	}()
 
 	// Iterate over files and add them to the tar archive
 	for _, file := range filesToWrite {
@@ -379,7 +437,11 @@ func addToArchive(tw *tar.Writer, filename string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if tempErr := file.Close(); tempErr != nil {
+			err = tempErr
+		}
+	}()
 
 	// Get FileInfo about our file providing file size, mode, etc.
 	info, err := file.Stat()
@@ -394,7 +456,7 @@ func addToArchive(tw *tar.Writer, filename string) error {
 	}
 
 	// Use full path as name (FileInfoHeader only takes the basename)
-	// If we don't do this the directory strucuture would
+	// If we don't do this the directory structure would
 	// not be preserved
 	// https://golang.org/src/archive/tar/common.go?#L626
 	header.Name = filename

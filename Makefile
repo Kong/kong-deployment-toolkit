@@ -9,3 +9,4 @@ clean:
 	rm -f $(wildcard *.tar.gz)
 	rm -f $(wildcard *.log)
 	rm -rf bin/
+	rm -f Summary.txt

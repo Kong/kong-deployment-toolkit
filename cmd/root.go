@@ -22,16 +22,17 @@ THE SOFTWARE.
 package cmd
 
 import (
-	"github.com/spf13/cobra"
 	"os"
+
+	"github.com/spf13/cobra"
 	// kongv1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1"
 	// kongv1beta1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1beta1"
 )
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "mist",
-	Short: "A brief description of your mist",
+	Use:   "kdt",
+	Short: "A brief description of kdt",
 	Long: `A longer description that spans multiple lines and likely contains
 examples and usage of using your application. For example:
 

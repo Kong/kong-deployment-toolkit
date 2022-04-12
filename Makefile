@@ -1,8 +1,7 @@
 .SILENT: clean
 
 build:
-	go build -o bin/mist
-
+	go build -o bin/kdt
 clean:
 	rm -f $(wildcard *.yaml)
 	rm -f $(wildcard *.json)

@@ -21,7 +21,7 @@ THE SOFTWARE.
 */
 package main
 
-import "github.com/johnharris85/the-mist/cmd"
+import "github.com/kong/kong-debug-tool/cmd"
 
 func main() {
 	cmd.Execute()

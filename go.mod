@@ -1,4 +1,4 @@
-module github.com/johnharris85/the-mist
+module github.com/kong/kong-debug-tool
 
 go 1.17
 

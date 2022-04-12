@@ -1,4 +1,4 @@
-# The Mist
+# Kong Debug Tool
 
 A tool for collecting debug information for Kong Gateway and Kong Mesh / Kuma.
 

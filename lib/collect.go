@@ -23,11 +23,17 @@ package cmd
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/kong/deck/dump"
@@ -36,23 +42,19 @@ import (
 	"github.com/kong/deck/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"github.com/spf13/cobra"
-	"io"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	kjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/rest"
-	"os"
-	"strings"
-	"time"
 
 	// kongv1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1"
 	// kongv1beta1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1beta1"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
 	// netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -65,15 +67,15 @@ const (
 
 var (
 	rType       string
-	kongImages  []string
-	meshImages  []string
+	kongImages  = []string{"kong-gateway", "kubernetes-ingress-controller"}
+	meshImages  = []string{"kuma-dp", "kuma-cp", "kuma-init"}
 	deckHeaders []string
 )
 
-var (
-	defaultKongImageList = []string{"kong-gateway", "kubernetes-ingress-controller"}
-	defaultMeshImageList = []string{"kuma-dp", "kuma-cp", "kuma-init"}
-)
+//var (
+// 	defaultKongImageList = []string{"kong-gateway", "kubernetes-ingress-controller"}
+// 	defaultMeshImageList = []string{"kuma-dp", "kuma-cp", "kuma-init"}
+// )
 
 type Summary struct {
 	Version  string
@@ -100,45 +102,27 @@ type PortForwardAPodRequest struct {
 	ReadyCh chan struct{}
 }
 
-// collectCmd represents the base command when called without any subcommands
-var collectCmd = &cobra.Command{
-	Use:   "collect",
-	Short: "A brief description of your collect",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+func Execute() error {
+	rType = os.Getenv("KONG_RUNTIME")
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	PreRun: toggleDebug,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if rType == "" {
-			runtime, err := guessRuntime()
-			if err != nil {
-				return err
-			}
-			rType = runtime
+	if rType == "" {
+		runtime, err := guessRuntime()
+		if err != nil {
+			return err
 		}
-		switch rType {
-		case "docker":
-			return runDocker()
-		case "kubernetes":
-			return runKubernetes()
-		case "vm":
-			fmt.Println("Not supported yet")
-		default:
-			fmt.Println("error")
-		}
-		return nil
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(collectCmd)
-	collectCmd.PersistentFlags().StringVarP(&rType, "runtime", "r", "", "runtime")
-	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "gateway-images", "g", defaultKongImageList, "kong images")
-	collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, "mesh images")
-	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "deck-headers", "H", nil, "deck headers")
+		rType = runtime
+	}
+	switch rType {
+	case "docker":
+		return runDocker()
+	case "kubernetes":
+		return runKubernetes()
+	case "vm":
+		fmt.Println("Not supported yet")
+	default:
+		fmt.Println("error")
+	}
+	return nil
 }
 
 func formatJSON(data []byte) ([]byte, error) {
@@ -151,7 +135,7 @@ func formatJSON(data []byte) ([]byte, error) {
 }
 
 func guessRuntime() (string, error) {
-	log.Debug("trying to guess runtime...")
+	log.Debug("Trying to guess runtime...")
 	var errList []string
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -205,13 +189,17 @@ func runDocker() error {
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
+		log.Error("Unable to create docker api client")
 		return err
 	}
 
 	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{})
 	if err != nil {
+		log.Error("Unable to get container list from docker api")
 		return err
 	}
+
+	log.Debug("Found: ", len(containers), " containers running")
 
 	var kongContainers []types.Container
 
@@ -228,12 +216,16 @@ func runDocker() error {
 	for _, c := range kongContainers {
 		j, b, err := cli.ContainerInspectWithRaw(ctx, c.ID, false)
 		if err != nil {
-			return err
+			log.Error("Unable to inspect container:", err)
+			continue
+			//return err
 		}
 
 		prettyJSON, err := formatJSON(b)
 		if err != nil {
-			return err
+			log.Error("Unable to format JSON:", err)
+			continue
+			//return err
 		}
 
 		env := make(map[string]string)
@@ -248,83 +240,129 @@ func runDocker() error {
 
 		sumBytes := []byte(fmt.Sprintf(
 			`Environment Summary:
-- Platform: %s
-- Kong Version: %s
-- Vitals: %s
-- Portal: %s
-- DB Mode: %s
-`, sum.Platform, sum.Version, sum.Vitals, sum.Portal, sum.DBMode))
+			- Platform: %s
+			- Kong Version: %s
+			- Vitals: %s
+			- Portal: %s
+			- DB Mode: %s
+			`, sum.Platform, sum.Version, sum.Vitals, sum.Portal, sum.DBMode))
 
 		summaryFile, err := os.Create("Summary.txt")
-		if err != nil {
-			return err
-		}
+		defer summaryFile.Close()
 
-		log.Debug("writing summary data")
-		_, err = io.Copy(summaryFile, bytes.NewReader(sumBytes))
 		if err != nil {
-			return err
+			log.Error("Unable to create summary file:", err)
+			continue
+			//return err
+		} else {
+			log.Debug("writing summary data")
+			_, err = io.Copy(summaryFile, bytes.NewReader(sumBytes))
+			if err != nil {
+				log.Error("Unable to write to summary file:", err)
+				continue
+				//return err
+			} else {
+				err = summaryFile.Close()
+				if err != nil {
+					log.Error("Unable to close summary file:", err)
+					continue
+					//return err
+				} else {
+					filesToZip = append(filesToZip, "Summary.txt")
+				}
+			}
 		}
-
-		err = summaryFile.Close()
-		if err != nil {
-			return err
-		}
-		filesToZip = append(filesToZip, "Summary.txt")
 
 		sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(c.Image, ":", "/"), "/", "-")
 		sanitizedContainerName := strings.ReplaceAll(c.Names[0], "/", "")
 		inspectFilename := fmt.Sprintf("%s-%s.json", sanitizedContainerName, sanitizedImageName)
 		inspectFile, err := os.Create(inspectFilename)
-		if err != nil {
-			return err
-		}
+		defer inspectFile.Close()
 
-		log.Debugf("writing docker inspect data for %s", sanitizedContainerName)
-		_, err = io.Copy(inspectFile, bytes.NewReader(prettyJSON))
 		if err != nil {
-			return err
-		}
-
-		err = inspectFile.Close()
-		if err != nil {
-			return err
-		}
-		filesToZip = append(filesToZip, inspectFilename)
-
-		options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true}
-		logs, err := cli.ContainerLogs(ctx, c.ID, options)
-		if err != nil {
-			return err
+			log.Error("Unable to create inspection file:", err)
+			continue
+			//return err
+		} else {
+			log.Debugf("writing docker inspect data for %s", sanitizedContainerName)
+			_, err = io.Copy(inspectFile, bytes.NewReader(prettyJSON))
+			if err != nil {
+				log.Error("Unable to write inspect file:", err)
+				continue
+				//return err
+			} else {
+				err = inspectFile.Close()
+				if err != nil {
+					log.Error("Unable to close inspect file:", err)
+					continue
+					//return err
+				} else {
+					filesToZip = append(filesToZip, inspectFilename)
+				}
+			}
 		}
 
 		logsFilename := fmt.Sprintf("%s-%s.log", sanitizedContainerName, sanitizedImageName)
 		logFile, err := os.Create(logsFilename)
+		defer logFile.Close()
+
 		if err != nil {
-			return err
+			log.Error("Unable to create container log file:", err)
+			continue
+			//return err
+		} else {
+			options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true}
+			logs, err := cli.ContainerLogs(ctx, c.ID, options)
+
+			defer logs.Close()
+			if err != nil {
+				log.Error("Unable to retrieve container logs:", err)
+				continue
+				//return err
+			} else {
+				log.Debugf("writing docker logs data for %s", sanitizedContainerName)
+
+				buf := bufio.NewScanner(logs)
+
+				for buf.Scan() {
+
+					sanitizedBytes := buf.Bytes()[8:]
+
+					_, err = io.Copy(logFile, strings.NewReader(string(sanitizedBytes)+"\n"))
+					if err != nil {
+						log.Error("Unable to write container logs: ", err)
+						continue
+						//return err
+					}
+				}
+
+				err = logFile.Close()
+				if err != nil {
+					log.Error("Unable to close container logs: ", err)
+					continue
+					//return err
+				} else {
+					filesToZip = append(filesToZip, logsFilename)
+				}
+
+			}
 		}
 
-		log.Debugf("writing docker logs data for %s", sanitizedContainerName)
-		_, err = io.Copy(logFile, logs)
-		if err != nil {
-			return err
+		if os.Getenv("KONG_ADDR") != "" {
+			err = getKongDump(os.Getenv("KONG_ADDR"), "kong-dump.yaml")
+			if err != nil {
+				log.Error("Kong dump unsuccessful: ", err)
+				//return err
+			} else {
+				filesToZip = append(filesToZip, "kong-dump.yaml")
+			}
+		} else {
+			log.Println("KONG_ADDR environment variable not set, cannot get dump of Kong config.")
 		}
 
-		err = logFile.Close()
-		if err != nil {
-			return err
-		}
-
-		filesToZip = append(filesToZip, logsFilename)
-
-		err = getKongDump("https://localhost:8444", "kong-dump.yaml")
-		if err != nil {
-			return err
-		}
-		filesToZip = append(filesToZip, "kong-dump.yaml")
 	}
 
-	log.Debugf("writing tar.gz output")
+	log.Debugf("Writing tar.gz output")
 	err = writeFiles(filesToZip)
 	if err != nil {
 		return err
@@ -345,6 +383,7 @@ func getKongDump(endpoint, fileToWrite string) error {
 		Debug:         false,
 		Headers:       deckHeaders,
 	})
+
 	if err != nil {
 		return err
 	}
@@ -401,33 +440,60 @@ func runKubernetes() error {
 
 	kubeClient, err := createClient()
 	if err != nil {
+		log.Error("Unable to create k8s client")
 		return err
 	}
+
 	pl, err := kubeClient.CoreV1().Pods("").List(ctx, v1.ListOptions{})
+
+	//To keep track of whether a particular pod has been added already. As a pod with an ingress-controller image and a kong-gateway image will be added twice to the kongK8sPods slice
+	foundPod := make(map[string]bool)
+
 	for _, p := range pl.Items {
 		for _, c := range p.Spec.Containers {
 			for _, i := range append(kongImages, meshImages...) {
 				if strings.Contains(c.Image, i) {
-					kongK8sPods = append(kongK8sPods, p)
+					if !foundPod[p.Name] {
+						log.Debug("Appending: ", p.Name, " with containers: ", len(p.Spec.Containers))
+						kongK8sPods = append(kongK8sPods, p)
+						foundPod[p.Name] = true
+					}
 				}
 			}
 		}
 	}
-	logFilenames, err := writePodDetails(ctx, kubeClient, kongK8sPods)
-	if err != nil {
-		return err
-	}
-	filesToZip = append(filesToZip, logFilenames...)
 
-	err = getKongDump("https://localhost:8010", "kong-dump.yaml")
-	if err != nil {
-		return err
-	}
-	filesToZip = append(filesToZip, "kong-dump.yaml")
+	if len(kongK8sPods) > 0 {
+		logFilenames, err := writePodDetails(ctx, kubeClient, kongK8sPods)
 
-	err = writeFiles(filesToZip)
-	if err != nil {
-		return err
+		if err != nil {
+			log.Error("There was an error writing pod details: ", err)
+		} else {
+			filesToZip = append(filesToZip, logFilenames...)
+		}
+
+		if os.Getenv("KONG_ADDR") != "" {
+			log.Info("Attempting to connect to admin-api on: ", os.Getenv("KONG_ADDR"))
+
+			err = getKongDump(os.Getenv("KONG_ADDR"), "kong-dump.yaml")
+			if err != nil {
+				log.Error("Kong dump unsuccessful: ", err)
+				//return err
+			} else {
+				filesToZip = append(filesToZip, "kong-dump.yaml")
+			}
+		} else {
+			log.Info("KONG_ADDR environment variable not set, cannot get dump of Kong config.")
+		}
+
+		err = writeFiles(filesToZip)
+		if err != nil {
+			return err
+		} else {
+
+		}
+	} else {
+		log.Info("No Kong pods found in cluster")
 	}
 
 	return nil
@@ -459,37 +525,55 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 	for _, pod := range podList {
 		p, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 		if err != nil {
-			return logFilenames, err
+			log.Error(err)
+			//return logFilenames, err
+			continue
 		}
-		for _, container := range append(p.Spec.InitContainers, p.Spec.Containers...) {
+
+		log.Debug("Working on Pod: ", p.Name, " in namespace: ", p.Namespace)
+
+		//for _, container := range append(p.Spec.InitContainers, p.Spec.Containers...) {
+		for _, container := range p.Spec.Containers {
+			log.Debug("Working on container: ", container.Name)
+
 			podLogOpts := corev1.PodLogOptions{Container: container.Name}
 			// podLogOpts.TailLines = &[]int64{int64(100)}[0]
 			podLogs, err := clientSet.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &podLogOpts).Stream(ctx)
 			if err != nil {
-				return logFilenames, err
+				log.Error(err)
+				//return logFilenames, err
+				continue
 			}
 
 			sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(container.Image, ":", "/"), "/", "-")
 			logsFilename := fmt.Sprintf("%s-%s.log", pod.Name, sanitizedImageName)
 
 			logFile, err := os.Create(logsFilename)
+			defer logFile.Close()
+
 			if err != nil {
-				panic(err)
+				log.Error(err)
 			}
 
 			_, err = io.Copy(logFile, podLogs)
 			if err != nil {
-				return logFilenames, err
+				log.Error(err)
+				//return logFilenames, err
+				continue
 			}
 
 			err = podLogs.Close()
 			if err != nil {
-				return logFilenames, err
+				log.Error(err)
+				//return logFilenames, err
+				continue
 			}
 
 			err = logFile.Close()
 			if err != nil {
-				return logFilenames, err
+				log.Error(err)
+				//return logFilenames, err
+				continue
 			}
 
 			logFilenames = append(logFilenames, logsFilename)
@@ -505,27 +589,33 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 
 				sumBytes := []byte(fmt.Sprintf(
 					`Environment Summary:
-- Platform: %s
-- Kong Version: %s
-- Vitals: %s
-- Portal: %s
-- DB Mode: %s
-`, sum.Platform, sum.Version, sum.Vitals, sum.Portal, sum.DBMode))
+					- Platform: %s
+					- Kong Version: %s
+					- Vitals: %s
+					- Portal: %s
+					- DB Mode: %s
+					`, sum.Platform, sum.Version, sum.Vitals, sum.Portal, sum.DBMode))
 
 				summaryFile, err := os.Create("Summary.txt")
 				if err != nil {
-					return logFilenames, err
+					log.Error(err)
+					//return logFilenames, err
+					continue
 				}
 
-				log.Debug("writing summary data")
+				log.Debug("Writing summary data for: ", container.Name)
 				_, err = io.Copy(summaryFile, bytes.NewReader(sumBytes))
 				if err != nil {
-					return logFilenames, err
+					log.Error(err)
+					//return logFilenames, err
+					continue
 				}
 
 				err = summaryFile.Close()
 				if err != nil {
-					return logFilenames, err
+					log.Error(err)
+					//return logFilenames, err
+					continue
 				}
 				logFilenames = append(logFilenames, "Summary.txt")
 			}
@@ -533,9 +623,13 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 
 		podDefFileName := fmt.Sprintf("%s.yaml", p.Name)
 		podDefFile, err := os.Create(podDefFileName)
+		defer podDefFile.Close()
+
 		if err != nil {
-			panic(err)
+			log.Error(err)
+			continue
 		}
+
 		buf := bytes.NewBufferString("")
 		pod.TypeMeta = metav1.TypeMeta{
 			Kind:       "Pod",
@@ -548,10 +642,18 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 			Strict: true,
 		})
 		err = serializer.Encode(&pod, buf)
+
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
 		_, err = io.Copy(podDefFile, buf)
 		if err != nil {
-			return logFilenames, err
+			log.Println(err)
+			continue
 		}
+
 		logFilenames = append(logFilenames, podDefFileName)
 	}
 	return logFilenames, nil
@@ -589,6 +691,8 @@ func writeFiles(filesToWrite []string) error {
 			return err
 		}
 	}
+
+	log.Info("Diagnostics have been written to: ", output.Name())
 
 	return nil
 }

@@ -2,9 +2,11 @@
 
 A tool for collecting debug information for Kong Gateway and Kong Mesh / Kuma.
 
+Currently supports docker and k8s deployments. Mesh and VM not currently supported.
+
 ## What is collected
 
-The tool collects the following information and saves it to the local machine as a `.tar.gz` file:
+The tool collects the following information and saves it as a `.tar.gz` file:
 
 - Logs for all Kong gateway instances (K8s / VM / Docker)
 - Logs for all Kong Ingress Controller instances (K8s)

@@ -1,0 +1,7 @@
+Environment Summary:
+					- Platform: Kubernetes
+					- Kong Version: Unknown
+					- Vitals: off
+					- Portal: off
+					- DB Mode: postgres
+					

@@ -63,7 +63,7 @@ func main() {
 
 func base(w http.ResponseWriter, r *http.Request) {
 
-	p := path.Dir("index.html")
+	p := path.Dir("/tmp/index.html")
 	// set header
 	w.Header().Set("Content-type", "text/html")
 	http.ServeFile(w, r, p)

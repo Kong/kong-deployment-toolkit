@@ -35,3 +35,26 @@ Examples of sensitive data that should be checked for include (but are not limit
 ## Security / Access
 
 This tool runs with the privileges of the _executing user_ and does not elevate privileges at any time.
+
+## Enrironemnt Variables
+KONG_ADDR : For directing the container to the address of the admin-api (Used to dump Kong config)
+DECK_HEADERS : As with deck, used for RBAC credential headers for admin-api
+LOG_LEVEL : "debug" will enable debug logging on the stdout of the container, otherwise info level logging only.
+KONG_RUNTIME : Currently only 'docker' and 'kubernetes' are supported. IF left empty, application will attempt to find one or the other.
+KUBECONFIG : Needs to point to a volume containing the ~/.kube/config or similar kubernetes config file.
+
+Either the docker socket or the kubeconfig file need to be added as a volume to the container in order to extract logs from either deployment framework.
+
+## Running the container
+
+docker run \ 
+-p 8080:8080 \ 
+-e KONG_ADDR=https://docker.for.mac.localhost:8444 \
+-e DECK_HEADERS=kong-admin-token:admin \
+-e LOG_LEVEL=debug \
+-e KONG_RUNTIME=kubernetes \
+-v /var/run/docker.sock:/var/run/docker.sock \
+-v ~/.kube/docker_config:/kube/config \
+-e KUBECONFIG=/kube/config \
+--name kdt \
+kdt:1.0

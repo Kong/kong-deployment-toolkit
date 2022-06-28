@@ -4,9 +4,13 @@ go 1.17
 
 require (
 	github.com/docker/docker v20.10.12+incompatible
+	github.com/imroc/req v0.3.2
 	github.com/kong/deck v1.12.0
+	github.com/kong/go-kong v0.29.0
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.8.1
+	github.com/ssgelm/cookiejarparser v1.0.1
+	github.com/stretchr/objx v0.2.0
 	k8s.io/api v0.23.4
 	k8s.io/apimachinery v0.23.4
 	k8s.io/cli-runtime v0.23.4
@@ -50,7 +54,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/kong/go-kong v0.29.0 // indirect
 	github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de // indirect
 	github.com/lufia/plan9stats v0.0.0-20220326011226-f1430873d8db // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
@@ -70,7 +73,6 @@ require (
 	github.com/shirou/gopsutil/v3 v3.22.4 // indirect
 	github.com/spf13/cobra v1.4.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	github.com/ssgelm/cookiejarparser v1.0.1 // indirect
 	github.com/stretchr/testify v1.7.1 // indirect
 	github.com/tidwall/gjson v1.14.1 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

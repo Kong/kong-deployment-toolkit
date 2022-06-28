@@ -44,8 +44,8 @@ func main() {
 	}
 
 	if webserverPort == "" {
-		log.Info("WEBSERVER_PORT environment variable not set, defaulting to 8080")
-		webserverPort = "8080"
+		log.Info("WEBSERVER_PORT environment variable not set, defaulting to 9090")
+		webserverPort = "9090"
 	}
 
 	//cmd.Execute()
@@ -67,6 +67,7 @@ func base(w http.ResponseWriter, r *http.Request) {
 	// set header
 	w.Header().Set("Content-type", "text/html")
 	http.ServeFile(w, r, p)
+	//http.FileServer(http.Dir("/tmp/index.html")).ServeHTTP(w, r)
 }
 
 func collectDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +82,6 @@ func collectDiagnostics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(diagFilename))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	http.ServeFile(w, r, diagFilename)
-
 }
 
 func cleanDirectory() {

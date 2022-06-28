@@ -47,14 +47,12 @@ Either the docker socket or the kubeconfig file need to be added as a volume to 
 
 ## Running the container
 
-docker run \ 
--p 8080:8080 \ 
+docker run -p 8080:8080 \
 -e KONG_ADDR=https://docker.for.mac.localhost:8444 \
 -e DECK_HEADERS=kong-admin-token:admin \
 -e LOG_LEVEL=debug \
--e KONG_RUNTIME=kubernetes \
+-e KONG_RUNTIME=docker \
 -v /var/run/docker.sock:/var/run/docker.sock \
 -v ~/.kube/docker_config:/kube/config \
 -e KUBECONFIG=/kube/config \
---name kdt \
-kdt:1.0
+--name kdt  kdt:1.0

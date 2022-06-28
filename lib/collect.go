@@ -27,9 +27,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -40,8 +44,11 @@ import (
 	"github.com/kong/deck/file"
 	"github.com/kong/deck/state"
 	"github.com/kong/deck/utils"
+	"github.com/kong/go-kong/kong"
+
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"github.com/ssgelm/cookiejarparser"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -56,6 +63,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	// netv1 "k8s.io/api/networking/v1"
+	"github.com/stretchr/objx"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -66,10 +74,12 @@ const (
 )
 
 var (
-	rType       string
-	kongImages  = []string{"kong-gateway", "kubernetes-ingress-controller"}
-	meshImages  = []string{"kuma-dp", "kuma-cp", "kuma-init"}
-	deckHeaders []string
+	rType         string
+	kongImages    = []string{"kong-gateway", "kubernetes-ingress-controller"}
+	meshImages    = []string{"kuma-dp", "kuma-cp", "kuma-init"}
+	deckHeaders   []string
+	clientTimeout time.Duration
+	rootConfig    objx.Map
 )
 
 //var (
@@ -326,7 +336,14 @@ func runDocker() error {
 
 				for buf.Scan() {
 
-					sanitizedBytes := buf.Bytes()[8:]
+					bytes := buf.Bytes()
+					var sanitizedBytes []byte
+
+					if len(bytes) > 7 {
+						sanitizedBytes = buf.Bytes()[8:]
+					} else {
+						sanitizedBytes = buf.Bytes()[7:]
+					}
 
 					_, err = io.Copy(logFile, strings.NewReader(string(sanitizedBytes)+"\n"))
 					if err != nil {
@@ -349,12 +366,17 @@ func runDocker() error {
 		}
 
 		if os.Getenv("KONG_ADDR") != "" {
-			err = getKongDump(os.Getenv("KONG_ADDR"), "kong-dump.yaml")
+			ws_names, err := getKongDump(os.Getenv("KONG_ADDR"), "kong-dump.yaml")
+
 			if err != nil {
 				log.Error("Kong dump unsuccessful: ", err)
 				//return err
 			} else {
-				filesToZip = append(filesToZip, "kong-dump.yaml")
+				for _, name := range ws_names {
+					filesToZip = append(filesToZip, name+"-kong-dump.yaml")
+				}
+
+				filesToZip = append(filesToZip, "KDD.json")
 			}
 		} else {
 			log.Println("KONG_ADDR environment variable not set, cannot get dump of Kong config.")
@@ -371,12 +393,87 @@ func runDocker() error {
 	return nil
 }
 
-func getKongDump(endpoint, fileToWrite string) error {
+func GetClient(opt utils.KongClientConfig) (*http.Client, string, error) {
+	var tlsConfig tls.Config
+	if opt.TLSSkipVerify {
+		tlsConfig.InsecureSkipVerify = true
+	}
+	if opt.TLSServerName != "" {
+		tlsConfig.ServerName = opt.TLSServerName
+	}
+
+	if opt.TLSCACert != "" {
+		certPool := x509.NewCertPool()
+		ok := certPool.AppendCertsFromPEM([]byte(opt.TLSCACert))
+		if !ok {
+			return nil, "", fmt.Errorf("failed to load TLSCACert")
+		}
+		tlsConfig.RootCAs = certPool
+	}
+
+	if opt.TLSClientCert != "" && opt.TLSClientKey != "" {
+		// Read the key pair to create certificate
+		cert, err := tls.X509KeyPair([]byte(opt.TLSClientCert), []byte(opt.TLSClientKey))
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+
+	clientTimeout = time.Duration(opt.Timeout) * time.Second
+	c := opt.HTTPClient
+	if c == nil {
+		c = utils.HTTPClient()
+	}
+	defaultTransport := http.DefaultTransport.(*http.Transport)
+	defaultTransport.TLSClientConfig = &tlsConfig
+	c.Transport = defaultTransport
+	sanitizedAddress := utils.CleanAddress(opt.Address)
+
+	headers, err := parseHeaders(opt.Headers)
+	if err != nil {
+		return nil, "", fmt.Errorf("parsing headers: %w", err)
+	}
+	c = kong.HTTPClientWithHeaders(c, headers)
+
+	//_, err := url.ParseRequestURI(address)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to parse kong address: %w", err)
+	}
+	// Add Session Cookie support if required
+	if opt.CookieJarPath != "" {
+		jar, err := cookiejarparser.LoadCookieJarFile(opt.CookieJarPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to initialize cookie-jar: %w", err)
+		}
+		c.Jar = jar
+	}
+
+	// kongClient, err := kong.NewClient(kong.String(url.String()), c)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("creating client for Kong's Admin API: %w", err)
+	// }
+	// if opt.Debug {
+	// 	kongClient.SetDebugMode(true)
+	// 	kongClient.SetLogger(os.Stderr)
+	// }
+	// if opt.Workspace != "" {
+	// 	kongClient.SetWorkspace(opt.Workspace)
+	// }
+	return c, sanitizedAddress, nil
+}
+
+func getKongDump(endpoint, fileToWrite string) ([]string, error) {
+
+	var summaryInfo SummaryInfo
+	var finalResponse = make(map[string]interface{})
+
 	if deckHeaders == nil {
 		if os.Getenv("DECK_HEADERS") != "" {
 			deckHeaders = strings.Split(os.Getenv("DECK_HEADERS"), ",")
 		}
 	}
+
 	client, err := utils.GetKongClient(utils.KongClientConfig{
 		Address:       endpoint,
 		TLSSkipVerify: true,
@@ -385,28 +482,157 @@ func getKongDump(endpoint, fileToWrite string) error {
 	})
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	d, err := dump.Get(context.Background(), client, dump.Config{
-		RBACResourcesOnly: false,
-		SkipConsumers:     false,
-	})
+	root, err := client.RootJSON(context.Background())
+
 	if err != nil {
-		return err
+		return nil, err
 	}
-	ks, err := state.Get(d)
+
+	rootConfig, err = objx.FromJSON(string(root))
+
 	if err != nil {
-		return fmt.Errorf("building Kong dump state: %w", err)
+		return nil, err
 	}
-	err = file.KongStateToFile(ks, file.WriteConfig{
-		Filename:   fileToWrite,
-		FileFormat: file.YAML,
-	})
+	status, _ := getEndpoint(client, "/status")
+
+	workspaces, err := getWorkspaces(client)
+
 	if err != nil {
-		return fmt.Errorf("building Kong dump file: %w", err)
+		return nil, err
 	}
-	return nil
+
+	licenseReport, err := getEndpoint(client, "/license/report")
+
+	if err != nil {
+		return nil, err
+	}
+
+	var ws_names []string
+
+	summaryInfo.TotalWorkspaceCount = len(workspaces.Data)
+	summaryInfo.DeploymentTopology = rootConfig.Get("configuration.role").Str()
+	summaryInfo.DatabaseType = rootConfig.Get("configuration.database").Str()
+	summaryInfo.KongVersion = rootConfig.Get("version").Str()
+
+	switch summaryInfo.DeploymentTopology {
+	case "control_plane":
+		summaryInfo.DeploymentTopology = "hybrid"
+	case "traditional":
+		if summaryInfo.DatabaseType == "off" {
+			summaryInfo.DeploymentTopology = "DB-Less"
+		}
+	}
+
+	finalResponse["root_config"] = rootConfig
+	finalResponse["status"] = status
+	finalResponse["license_report"] = licenseReport
+
+	//Incomplete data as yet, but saving what we've collected so far incase of error during workspace iteration
+	finalResponse["summary_info"] = summaryInfo
+
+	for _, ws := range workspaces.Data {
+		ws_names = append(ws_names, ws.Name)
+		client.SetWorkspace(ws.Name)
+		log.Debug("Workspace:", ws.Name)
+
+		d, err := dump.Get(context.Background(), client, dump.Config{
+			RBACResourcesOnly: false,
+			SkipConsumers:     false,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		summaryInfo.TotalConsumerCount += len(d.Consumers)
+		summaryInfo.TotalServiceCount += len(d.Services)
+		summaryInfo.TotalRouteCount += len(d.Routes)
+		summaryInfo.TotalPluginCount += len(d.Plugins)
+		summaryInfo.TotalTargetCount += len(d.Targets)
+		summaryInfo.TotalUpstreamCount += len(d.Upstreams)
+
+		if ws.Config.Portal {
+			summaryInfo.TotalEnabledDevPortalCount += 1
+		}
+
+		ks, err := state.Get(d)
+		if err != nil {
+			return nil, fmt.Errorf("building Kong dump state: %w", err)
+		}
+		err = file.KongStateToFile(ks, file.WriteConfig{
+			Filename:   ws.Name + "-" + fileToWrite,
+			FileFormat: file.YAML,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("building Kong dump file: %w", err)
+		}
+	}
+
+	//Add the full info now we know we have it all
+	finalResponse["summary_info"] = summaryInfo
+
+	jsonBytes, err := json.Marshal(finalResponse)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = os.WriteFile("KDD.json", jsonBytes, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return ws_names, nil
+}
+
+func getEndpoint(client *kong.Client, endpoint string) (objx.Map, error) {
+	req, err := client.NewRequest("GET", endpoint, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	oReturn, err := getObjx(req, client)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return oReturn, nil
+}
+
+func getObjx(req *http.Request, client *kong.Client) (objx.Map, error) {
+	resp, err := client.DoRAW(context.Background(), req)
+
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	strBody := string(body)
+
+	oReturn, err := objx.FromJSON(strBody)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return oReturn, nil
+}
+
+func getWorkspaces(client *kong.Client) (*Workspaces, error) {
+	req, err := client.NewRequest("GET", "/workspaces", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var w Workspaces
+	_, err = client.Do(context.Background(), req, &w)
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
 }
 
 func createSummary(env map[string]string) Summary {
@@ -475,12 +701,16 @@ func runKubernetes() error {
 		if os.Getenv("KONG_ADDR") != "" {
 			log.Info("Attempting to connect to admin-api on: ", os.Getenv("KONG_ADDR"))
 
-			err = getKongDump(os.Getenv("KONG_ADDR"), "kong-dump.yaml")
+			ws_names, err := getKongDump(os.Getenv("KONG_ADDR"), "kong-dump.yaml")
 			if err != nil {
 				log.Error("Kong dump unsuccessful: ", err)
 				//return err
 			} else {
-				filesToZip = append(filesToZip, "kong-dump.yaml")
+				for _, name := range ws_names {
+					filesToZip = append(filesToZip, name+"-kong-dump.yaml")
+				}
+
+				filesToZip = append(filesToZip, "KDD.json")
 			}
 		} else {
 			log.Info("KONG_ADDR environment variable not set, cannot get dump of Kong config.")
@@ -741,3 +971,237 @@ func addToArchive(tw *tar.Writer, filename string) error {
 
 	return nil
 }
+
+func parseHeaders(headers []string) (http.Header, error) {
+	res := http.Header{}
+	const splitLen = 2
+	for _, keyValue := range headers {
+		split := strings.SplitN(keyValue, ":", 2)
+		if len(split) >= splitLen {
+			res.Add(split[0], split[1])
+		} else {
+			return nil, fmt.Errorf("splitting header key-value '%s'", keyValue)
+		}
+	}
+	return res, nil
+}
+
+type Status struct {
+	Database struct {
+		Reachable bool `json:"reachable"`
+	} `json:"database"`
+	Memory struct {
+		LuaSharedDicts struct {
+			Kong struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong"`
+			KongClusterEvents struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_cluster_events"`
+			KongCoreDbCache struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_core_db_cache"`
+			KongCoreDbCacheMiss struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_core_db_cache_miss"`
+			KongCounters struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_counters"`
+			KongDbCache struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_db_cache"`
+			KongDbCacheMiss struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_db_cache_miss"`
+			KongHealthchecks struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_healthchecks"`
+			KongKeyring struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_keyring"`
+			KongLocks struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_locks"`
+			KongProcessEvents struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_process_events"`
+			KongRateLimitingCounters struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_rate_limiting_counters"`
+			KongReportsConsumers struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_reports_consumers"`
+			KongReportsRoutes struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_reports_routes"`
+			KongReportsServices struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_reports_services"`
+			KongReportsWorkspaces struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_reports_workspaces"`
+			KongVitals struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_vitals"`
+			KongVitalsCounters struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_vitals_counters"`
+			KongVitalsLists struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"kong_vitals_lists"`
+			PrometheusMetrics struct {
+				AllocatedSlabs string `json:"allocated_slabs"`
+				Capacity       string `json:"capacity"`
+			} `json:"prometheus_metrics"`
+		} `json:"lua_shared_dicts"`
+		WorkersLuaVms []struct {
+			HTTPAllocatedGc string `json:"http_allocated_gc"`
+			Pid             int    `json:"pid"`
+		} `json:"workers_lua_vms"`
+	} `json:"memory"`
+	Server struct {
+		ConnectionsAccepted int `json:"connections_accepted"`
+		ConnectionsActive   int `json:"connections_active"`
+		ConnectionsHandled  int `json:"connections_handled"`
+		ConnectionsReading  int `json:"connections_reading"`
+		ConnectionsWaiting  int `json:"connections_waiting"`
+		ConnectionsWriting  int `json:"connections_writing"`
+		TotalRequests       int `json:"total_requests"`
+	} `json:"server"`
+	ConfigurationHash string `json:"configuration_hash,omitempty" yaml:"configuration_hash,omitempty"`
+}
+
+type Workspaces struct {
+	Data []struct {
+		Comment interface{} `json:"comment"`
+		Config  struct {
+			Meta                      interface{} `json:"meta"`
+			Portal                    bool        `json:"portal"`
+			PortalAccessRequestEmail  interface{} `json:"portal_access_request_email"`
+			PortalApprovedEmail       interface{} `json:"portal_approved_email"`
+			PortalAuth                interface{} `json:"portal_auth"`
+			PortalAuthConf            interface{} `json:"portal_auth_conf"`
+			PortalAutoApprove         interface{} `json:"portal_auto_approve"`
+			PortalCorsOrigins         interface{} `json:"portal_cors_origins"`
+			PortalDeveloperMetaFields string      `json:"portal_developer_meta_fields"`
+			PortalEmailsFrom          interface{} `json:"portal_emails_from"`
+			PortalEmailsReplyTo       interface{} `json:"portal_emails_reply_to"`
+			PortalInviteEmail         interface{} `json:"portal_invite_email"`
+			PortalIsLegacy            interface{} `json:"portal_is_legacy"`
+			PortalResetEmail          interface{} `json:"portal_reset_email"`
+			PortalResetSuccessEmail   interface{} `json:"portal_reset_success_email"`
+			PortalSessionConf         interface{} `json:"portal_session_conf"`
+			PortalTokenExp            interface{} `json:"portal_token_exp"`
+		} `json:"config"`
+		CreatedAt int    `json:"created_at"`
+		ID        string `json:"id"`
+		Meta      struct {
+			Color     string      `json:"color"`
+			Thumbnail interface{} `json:"thumbnail"`
+		} `json:"meta"`
+		Name string `json:"name"`
+	} `json:"data"`
+	Next interface{} `json:"next"`
+}
+
+type SummaryInfo struct {
+	DatabaseType               string `json:"database_type"`
+	DeploymentTopology         string `json:"deployment_topology"`
+	KongVersion                string `json:"kong_version"`
+	TotalConsumerCount         int    `json:"total_consumer_count"`
+	TotalDataplaneCount        int    `json:"total_dataplane_count"`
+	TotalEnabledDevPortalCount int    `json:"total_enabled_dev_portal_count"`
+	TotalPluginCount           int    `json:"total_plugin_count"`
+	TotalRouteCount            int    `json:"total_route_count"`
+	TotalServiceCount          int    `json:"total_service_count"`
+	TotalTargetCount           int    `json:"total_target_count"`
+	TotalUpstreamCount         int    `json:"total_upstream_count"`
+	TotalWorkspaceCount        int    `json:"total_workspace_count"`
+}
+
+type CustomMessage struct {
+	Message string `json:"message"`
+}
+
+// func callApi(r *req.Req, host string, appendix string) objx.Map {
+// 	var resp *req.Resp
+// 	var err error
+
+// 	resp, err = r.Get(host + appendix)
+
+// 	if err != nil {
+// 		log.Error("Error calling api:", host+appendix, " - ", err)
+// 	}
+
+// 	var oResponse objx.Map
+// 	strResponse, _ := resp.ToString()
+
+// 	if strings.Contains(strResponse, "<html>") {
+// 		//If HTML is received instead of JSON. Dealing with this by sending a custom JSON message back.
+// 		//As Kong will generally send back a {"message":"Not Found"} response, so for now we'll send a {"message":"Found"} response when HTML is detected.
+// 		//This dictates whether the dev portal URL for that workspace is active
+// 		messageBytes, j_err := json.Marshal(CustomMessage{Message: "Found"})
+
+// 		if j_err != nil {
+// 			log.Println("Error marshalling JSON:", j_err)
+// 		}
+
+// 		oResponse, err = objx.FromJSON(string(messageBytes))
+// 	} else {
+// 		oResponse, err = objx.FromJSON(strResponse)
+// 	}
+
+// 	if err != nil {
+// 		log.Error("Error converting string to JSON response:", err)
+// 	}
+
+// 	return oResponse
+// }
+
+// func parseUrl(host string) *req.Req {
+// 	u, err := url.ParseRequestURI(host)
+
+// 	if err != nil {
+// 		log.Fatal("Error parsing URL:", host, " - ", err)
+// 	}
+
+// 	var r = req.New()
+
+// 	if u.Scheme == "https" {
+// 		req.Client().Jar, _ = cookiejar.New(nil)
+// 		tx, _ := req.Client().Transport.(*http.Transport)
+// 		tx.MaxIdleConns = 20
+// 		tx.TLSHandshakeTimeout = 20 * time.Second
+
+// 		//Skip verification of TLS admin-api endpoint.
+// 		tx.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+
+// 		client := &http.Client{Transport: tx}
+
+// 		r.SetClient(client)
+// 	}
+
+// 	//Set response to only include the body
+// 	r.SetFlags(req.LrespBody)
+
+// 	return r
+// }

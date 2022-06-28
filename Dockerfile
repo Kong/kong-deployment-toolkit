@@ -1,3 +1,11 @@
+FROM golang:1.18.3 AS build
+WORKDIR /kdt
+COPY go.mod ./
+COPY go.sum ./
+RUN go mod download
+ADD . .
+RUN GOOS=linux GOARCH=amd64 go build -o kdt
+
 FROM ubuntu:latest as base
 RUN apt-get update && apt-get install -y locales && rm -rf /var/lib/apt/lists/* && localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
 ENV LANG en_US.utf8
@@ -14,7 +22,7 @@ RUN install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
 ENV WEBSERVER_PORT 9090
 
-ADD /bin/kdt /tmp/kdt
+COPY --from=build /kdt/kdt /tmp/kdt
 ADD index.html /tmp/index.html
 
 CMD ["/tmp/kdt"]

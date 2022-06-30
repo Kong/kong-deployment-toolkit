@@ -18,7 +18,7 @@ The tool collects the following information and saves it as a `.tar.gz` file:
 - Docker inspect information for all Kuma / Kong Mesh control-plane instances (Docker)
 - Summary entity information for all workspaces (Not config, purely counts)
 - Status endpoint metrics
-- Workspace config dumps if ENABLE_CONFIG_DUMP is set to true
+- Workspace config dumps if `ENABLE_CONFIG_DUMP` is set to true
 
 ## Privacy 
 
@@ -34,22 +34,20 @@ Examples of sensitive data that should be checked for include (but are not limit
 
 This tool runs with the privileges of the _executing user_ and does not elevate privileges at any time.
 
-## Enrironemnt Variables
-ENABLE_CONFIG_DUMP - Enables dumping of workspace config. Default is to not create workspace config dumps.
-KONG_ADDR - For directing the collector to the address of the admin-api (Used to dump Kong config)
-DECK_HEADERS - As with deck, used for RBAC credential headers for admin-api
-LOG_LEVEL - "debug" will enable debug logging on the stdout of the container, otherwise info level logging only.
-KONG_RUNTIME - Currently only 'docker' and 'kubernetes' are supported. IF left empty, application will attempt to find one or the other.
-KUBECONFIG - Needs to point to a volume containing the ~/.kube/config or similar kubernetes config file.
+## Environemnt Variables
+`ENABLE_CONFIG_DUMP` - Enables dumping of workspace config. Default is to not create workspace config dumps.
+`KONG_ADDR` - For directing the collector to the address of the admin-api (Used to dump Kong config)
+`DECK_HEADERS` - As with deck, used for RBAC credential headers for admin-api
+`LOG_LEVEL` - "debug" will enable debug logging on the stdout of the container, otherwise info level logging only.
+`KONG_RUNTIME` - Currently only 'docker' and 'kubernetes' are supported. IF left empty, application will attempt to find one or the other.
+`KUBECONFIG` - Needs to point to a volume containing the ~/.kube/config or similar kubernetes config file.
 
 Either the docker socket or the kubeconfig file need to be added as a volume to the container in order to extract logs from either deployment framework.
 
 ## Volume Mounts
-```
--v ~/config_dumps:/tmp - Used to extract the dump files when they are collected. The KDT will put them in the /tmp directory.
--v /var/run/docker.sock:/var/run/docker.sock - Necessary if you are running Kong inside docker and want to extract logs.
--v ~/.kube/docker_config:/kube/config - Necessary if you are running Kong in K8s. Used alongside the KUBECONFIG environment variable.
-```
+`-v ~/config_dumps:/tmp` - Used to extract the dump files when they are collected. The KDT will put them in the /tmp directory.
+`-v /var/run/docker.sock:/var/run/docker.sock` - Necessary if you are running Kong inside docker and want to extract logs.
+`-v ~/.kube/docker_config:/kube/config` - Necessary if you are running Kong in K8s. Used alongside the `KUBECONFIG` environment variable.
 
 ## Running the container
 
@@ -64,8 +62,11 @@ docker run \
 -v ~/config_dumps:/tmp \
 -v /var/run/docker.sock:/var/run/docker.sock \
 -v ~/.kube/docker_config:/kube/config \
---name kdt kdt:1.0 collect
+--name kdt kdt:1.0
 ```
+This will show usage information. 
+
+`collect` is the only supported feature currently.
 
 The collect command will contact the k8s api obtained by the KUBECONFIG, or the Docker api obtained through the docker socket to retrieve the logs associated with all containers that are running one of our Kong images in either deployment environment.
 
@@ -77,5 +78,4 @@ To build the image
 
 ```
 docker build . -t kdt:1.0
-
 ```

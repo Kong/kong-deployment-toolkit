@@ -27,5 +27,6 @@ kdt
 *.yaml
 *.log
 *.json
+*.txt
 cbr.sh
 Archive/

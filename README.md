@@ -8,18 +8,17 @@ Currently supports docker and k8s deployments. Mesh and VM not currently support
 
 The tool collects the following information and saves it as a `.tar.gz` file:
 
-- Logs for all Kong gateway instances (K8s / VM / Docker)
+- Logs for all Kong gateway containers (K8s / Docker)
 - Logs for all Kong Ingress Controller instances (K8s)
 - Pod spec for all Kong gateway & ingress controller instances (K8s)
 - Docker inspect information for all Kong gateway instances (Docker)
-- kong.conf file (VM)
 - Logs for all Kuma / Kong Mesh control-plane instances (K8s / Docker)
 - Logs for all Kuma / Kong Mesh dataplanes (K8s / Docker)
 - Pod spec for Kuma / Kong Mesh control-plane instances (K8s)
 - Docker inspect information for all Kuma / Kong Mesh control-plane instances (Docker)
-- Dataplane configuration files (VM)
-- Dataplane (Envoy) logs (K8s / VM / Docker)
-- Dataplane (Envoy) configuration dumps (K8s / VM / Docker)
+- Summary entity information for all workspaces (Not config, purely counts)
+- Status endpoint metrics
+- Workspace config dumps if ENABLE_CONFIG_DUMP is set to true
 
 ## Privacy 
 
@@ -30,32 +29,47 @@ Examples of sensitive data that should be checked for include (but are not limit
 - Keys
 - Passwords
 - Other secret data
-- PII
 
 ## Security / Access
 
 This tool runs with the privileges of the _executing user_ and does not elevate privileges at any time.
 
 ## Enrironemnt Variables
-KONG_ADDR : For directing the container to the address of the admin-api (Used to dump Kong config)
-DECK_HEADERS : As with deck, used for RBAC credential headers for admin-api
-LOG_LEVEL : "debug" will enable debug logging on the stdout of the container, otherwise info level logging only.
-KONG_RUNTIME : Currently only 'docker' and 'kubernetes' are supported. IF left empty, application will attempt to find one or the other.
-KUBECONFIG : Needs to point to a volume containing the ~/.kube/config or similar kubernetes config file.
+ENABLE_CONFIG_DUMP - Enables dumping of workspace config. Default is to not create workspace config dumps.
+KONG_ADDR - For directing the collector to the address of the admin-api (Used to dump Kong config)
+DECK_HEADERS - As with deck, used for RBAC credential headers for admin-api
+LOG_LEVEL - "debug" will enable debug logging on the stdout of the container, otherwise info level logging only.
+KONG_RUNTIME - Currently only 'docker' and 'kubernetes' are supported. IF left empty, application will attempt to find one or the other.
+KUBECONFIG - Needs to point to a volume containing the ~/.kube/config or similar kubernetes config file.
 
 Either the docker socket or the kubeconfig file need to be added as a volume to the container in order to extract logs from either deployment framework.
 
+## Volume Mounts
+```
+-v ~/config_dumps:/tmp - Used to extract the dump files when they are collected. The KDT will put them in the /tmp directory.
+-v /var/run/docker.sock:/var/run/docker.sock - Necessary if you are running Kong inside docker and want to extract logs.
+-v ~/.kube/docker_config:/kube/config - Necessary if you are running Kong in K8s. Used alongside the KUBECONFIG environment variable.
+```
+
 ## Running the container
 
-docker run -p 9090:9090 \
--e KONG_ADDR=https://docker.for.mac.localhost:8444 \
+```
+docker run \
+-e KONG_ADDR=https://admin-api.my.domain:8444 \
 -e DECK_HEADERS=kong-admin-token:admin \
 -e LOG_LEVEL=debug \
 -e KONG_RUNTIME=docker \
+-e KUBECONFIG=/kube/config \
+-e ENABLE_CONFIG_DUMP=true \
+-v ~/config_dumps:/tmp \
 -v /var/run/docker.sock:/var/run/docker.sock \
 -v ~/.kube/docker_config:/kube/config \
--e KUBECONFIG=/kube/config \
---name kdt  kdt:1.0
+--name kdt kdt:1.0 collect
+```
+
+The collect command will contact the k8s api obtained by the KUBECONFIG, or the Docker api obtained through the docker socket to retrieve the logs associated with all containers that are running one of our Kong images in either deployment environment.
+
+It will then bundle the files up and make them available in the /tmp path inside the container.
 
 ## Building the image
 

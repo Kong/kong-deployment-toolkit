@@ -1,16 +1,13 @@
 /*
 Copyright © 2022 John Harris
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
-
 The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
-
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -45,6 +42,7 @@ import (
 	"github.com/kong/deck/state"
 	"github.com/kong/deck/utils"
 	"github.com/kong/go-kong/kong"
+	"github.com/spf13/cobra"
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -75,11 +73,12 @@ const (
 
 var (
 	rType         string
-	kongImages    = []string{"kong-gateway", "kubernetes-ingress-controller"}
-	meshImages    = []string{"kuma-dp", "kuma-cp", "kuma-init"}
+	kongImages    []string
+	meshImages    []string
 	deckHeaders   []string
 	clientTimeout time.Duration
 	rootConfig    objx.Map
+	kongAddr      string
 )
 
 //var (
@@ -112,28 +111,73 @@ type PortForwardAPodRequest struct {
 	ReadyCh chan struct{}
 }
 
-func Execute() error {
-	rType = os.Getenv("KONG_RUNTIME")
-
-	if rType == "" {
-		runtime, err := guessRuntime()
-		if err != nil {
-			return err
+var collectCmd = &cobra.Command{
+	Use:   "collect",
+	Short: "A brief description of your collect",
+	Long: `A longer description that spans multiple lines and likely contains
+examples and usage of using your application. For example:
+Cobra is a CLI library for Go that empowers applications.
+This application is a tool to generate the needed files
+to quickly create a Cobra application.`,
+	PreRun: toggleDebug,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if rType == "" {
+			runtime, err := guessRuntime()
+			if err != nil {
+				return err
+			}
+			rType = runtime
 		}
-		rType = runtime
-	}
-	switch rType {
-	case "docker":
-		return runDocker()
-	case "kubernetes":
-		return runKubernetes()
-	case "vm":
-		fmt.Println("Not supported yet")
-	default:
-		fmt.Println("error")
-	}
-	return nil
+		switch rType {
+		case "docker":
+			return runDocker()
+		case "kubernetes":
+			return runKubernetes()
+		case "vm":
+			fmt.Println("Not supported yet")
+		default:
+			fmt.Println("error")
+		}
+		return nil
+	},
 }
+
+var (
+	defaultKongImageList = []string{"kong-gateway", "kubernetes-ingress-controller"}
+	defaultMeshImageList = []string{"kuma-dp", "kuma-cp", "kuma-init"}
+)
+
+func init() {
+	rootCmd.AddCommand(collectCmd)
+	collectCmd.PersistentFlags().StringVarP(&rType, "runtime", "r", "", "runtime")
+	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "gateway-images", "g", defaultKongImageList, "kong images")
+	collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, "mesh images")
+	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "deck-headers", "H", nil, "deck headers")
+	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "", "http://localhost:8001", "kong addr")
+}
+
+// func Execute() error {
+// 	rType = os.Getenv("KONG_RUNTIME")
+
+// 	if rType == "" {
+// 		runtime, err := guessRuntime()
+// 		if err != nil {
+// 			return err
+// 		}
+// 		rType = runtime
+// 	}
+// 	switch rType {
+// 	case "docker":
+// 		return runDocker()
+// 	case "kubernetes":
+// 		return runKubernetes()
+// 	case "vm":
+// 		fmt.Println("Not supported yet")
+// 	default:
+// 		fmt.Println("error")
+// 	}
+// 	return nil
+// }
 
 func formatJSON(data []byte) ([]byte, error) {
 	var out bytes.Buffer
@@ -365,21 +409,17 @@ func runDocker() error {
 			}
 		}
 
-		if os.Getenv("KONG_ADDR") != "" {
-			ws_names, err := getKongDump(os.Getenv("KONG_ADDR"), "kong-dump.yaml")
+		ws_names, err := getKongDump("kong-dump.yaml")
 
-			if err != nil {
-				log.Error("Kong dump unsuccessful: ", err)
-				//return err
-			} else {
-				for _, name := range ws_names {
-					filesToZip = append(filesToZip, name+"-kong-dump.yaml")
-				}
-
-				filesToZip = append(filesToZip, "KDD.json")
-			}
+		if err != nil {
+			log.Error("Kong dump unsuccessful: ", err)
+			//return err
 		} else {
-			log.Println("KONG_ADDR environment variable not set, cannot get dump of Kong config.")
+			for _, name := range ws_names {
+				filesToZip = append(filesToZip, name+"-kong-dump.yaml")
+			}
+
+			filesToZip = append(filesToZip, "KDD.json")
 		}
 
 	}
@@ -463,15 +503,19 @@ func GetClient(opt utils.KongClientConfig) (*http.Client, string, error) {
 	return c, sanitizedAddress, nil
 }
 
-func getKongDump(endpoint, fileToWrite string) ([]string, error) {
+func getKongDump(fileToWrite string) ([]string, error) {
 
 	var summaryInfo SummaryInfo
 	var finalResponse = make(map[string]interface{})
 
-	if deckHeaders == nil {
-		if os.Getenv("DECK_HEADERS") != "" {
-			deckHeaders = strings.Split(os.Getenv("DECK_HEADERS"), ",")
-		}
+	endpoint := os.Getenv("KONG_ADDR")
+
+	if endpoint == "" {
+		endpoint = kongAddr
+	}
+
+	if os.Getenv("DECK_HEADERS") != "" {
+		deckHeaders = strings.Split(os.Getenv("DECK_HEADERS"), ",")
 	}
 
 	client, err := utils.GetKongClient(utils.KongClientConfig{
@@ -496,6 +540,7 @@ func getKongDump(endpoint, fileToWrite string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	status, _ := getEndpoint(client, "/status")
 
 	workspaces, err := getWorkspaces(client)
@@ -698,22 +743,16 @@ func runKubernetes() error {
 			filesToZip = append(filesToZip, logFilenames...)
 		}
 
-		if os.Getenv("KONG_ADDR") != "" {
-			log.Info("Attempting to connect to admin-api on: ", os.Getenv("KONG_ADDR"))
-
-			ws_names, err := getKongDump(os.Getenv("KONG_ADDR"), "kong-dump.yaml")
-			if err != nil {
-				log.Error("Kong dump unsuccessful: ", err)
-				//return err
-			} else {
-				for _, name := range ws_names {
-					filesToZip = append(filesToZip, name+"-kong-dump.yaml")
-				}
-
-				filesToZip = append(filesToZip, "KDD.json")
-			}
+		ws_names, err := getKongDump("kong-dump.yaml")
+		if err != nil {
+			log.Error("Kong dump unsuccessful: ", err)
+			//return err
 		} else {
-			log.Info("KONG_ADDR environment variable not set, cannot get dump of Kong config.")
+			for _, name := range ws_names {
+				filesToZip = append(filesToZip, name+"-kong-dump.yaml")
+			}
+
+			filesToZip = append(filesToZip, "KDD.json")
 		}
 
 		err = writeFiles(filesToZip)
@@ -1141,67 +1180,3 @@ type SummaryInfo struct {
 type CustomMessage struct {
 	Message string `json:"message"`
 }
-
-// func callApi(r *req.Req, host string, appendix string) objx.Map {
-// 	var resp *req.Resp
-// 	var err error
-
-// 	resp, err = r.Get(host + appendix)
-
-// 	if err != nil {
-// 		log.Error("Error calling api:", host+appendix, " - ", err)
-// 	}
-
-// 	var oResponse objx.Map
-// 	strResponse, _ := resp.ToString()
-
-// 	if strings.Contains(strResponse, "<html>") {
-// 		//If HTML is received instead of JSON. Dealing with this by sending a custom JSON message back.
-// 		//As Kong will generally send back a {"message":"Not Found"} response, so for now we'll send a {"message":"Found"} response when HTML is detected.
-// 		//This dictates whether the dev portal URL for that workspace is active
-// 		messageBytes, j_err := json.Marshal(CustomMessage{Message: "Found"})
-
-// 		if j_err != nil {
-// 			log.Println("Error marshalling JSON:", j_err)
-// 		}
-
-// 		oResponse, err = objx.FromJSON(string(messageBytes))
-// 	} else {
-// 		oResponse, err = objx.FromJSON(strResponse)
-// 	}
-
-// 	if err != nil {
-// 		log.Error("Error converting string to JSON response:", err)
-// 	}
-
-// 	return oResponse
-// }
-
-// func parseUrl(host string) *req.Req {
-// 	u, err := url.ParseRequestURI(host)
-
-// 	if err != nil {
-// 		log.Fatal("Error parsing URL:", host, " - ", err)
-// 	}
-
-// 	var r = req.New()
-
-// 	if u.Scheme == "https" {
-// 		req.Client().Jar, _ = cookiejar.New(nil)
-// 		tx, _ := req.Client().Transport.(*http.Transport)
-// 		tx.MaxIdleConns = 20
-// 		tx.TLSHandshakeTimeout = 20 * time.Second
-
-// 		//Skip verification of TLS admin-api endpoint.
-// 		tx.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-
-// 		client := &http.Client{Transport: tx}
-
-// 		r.SetClient(client)
-// 	}
-
-// 	//Set response to only include the body
-// 	r.SetFlags(req.LrespBody)
-
-// 	return r
-// }

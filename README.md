@@ -45,7 +45,7 @@ This tool runs with the privileges of the _executing user_ and does not elevate 
 Either the docker socket or the kubeconfig file need to be added as a volume to the container in order to extract logs from either deployment framework.
 
 ## Volume Mounts
-`-v ~/config_dumps:/tmp` - Used to extract the dump files when they are collected. The KDT will put them in the /tmp directory.<br/>
+`-v ~/config_dumps:/kdt` - Used to extract the dump files when they are collected. The KDT will put them in the /kdt directory.<br/>
 `-v /var/run/docker.sock:/var/run/docker.sock` - Necessary if you are running Kong inside docker and want to extract logs.<br/>
 `-v ~/.kube/docker_config:/kube/config` - Necessary if you are running Kong in K8s. Used alongside the `KUBECONFIG` environment variable.<br/>
 
@@ -59,7 +59,7 @@ docker run \
 -e KONG_RUNTIME=docker \
 -e KUBECONFIG=/kube/config \
 -e ENABLE_CONFIG_DUMP=true \
--v ~/config_dumps:/tmp \
+-v ~/config_dumps:/kdt \
 -v /var/run/docker.sock:/var/run/docker.sock \
 -v ~/.kube/docker_config:/kube/config \
 --name kdt kdt:1.0

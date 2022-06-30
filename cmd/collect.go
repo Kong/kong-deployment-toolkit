@@ -72,19 +72,15 @@ const (
 )
 
 var (
-	rType         string
-	kongImages    []string
-	meshImages    []string
-	deckHeaders   []string
-	clientTimeout time.Duration
-	rootConfig    objx.Map
-	kongAddr      string
+	rType                      string
+	kongImages                 []string
+	meshImages                 []string
+	deckHeaders                []string
+	clientTimeout              time.Duration
+	rootConfig                 objx.Map
+	kongAddr                   string
+	createWorkspaceConfigDumps bool
 )
-
-//var (
-// 	defaultKongImageList = []string{"kong-gateway", "kubernetes-ingress-controller"}
-// 	defaultMeshImageList = []string{"kuma-dp", "kuma-cp", "kuma-init"}
-// )
 
 type Summary struct {
 	Version  string
@@ -121,22 +117,30 @@ This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	PreRun: toggleDebug,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		rType = os.Getenv("KONG_RUNTIME")
+
+		if os.Getenv("LOG_LEVEL") == "debug" {
+			log.SetLevel(5)
+		}
+
 		if rType == "" {
+			log.Debug("No runtime detected, attempting to guess runtime...")
 			runtime, err := guessRuntime()
 			if err != nil {
 				return err
 			}
 			rType = runtime
 		}
+
 		switch rType {
 		case "docker":
 			return runDocker()
 		case "kubernetes":
 			return runKubernetes()
 		case "vm":
-			fmt.Println("Not supported yet")
+			log.Warn("Not supported yet")
 		default:
-			fmt.Println("error")
+			log.Error("Runtime not found:", rType)
 		}
 		return nil
 	},
@@ -154,30 +158,8 @@ func init() {
 	collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, "mesh images")
 	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "deck-headers", "H", nil, "deck headers")
 	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "", "http://localhost:8001", "kong addr")
+	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "config-dump", "c", false, "config dump")
 }
-
-// func Execute() error {
-// 	rType = os.Getenv("KONG_RUNTIME")
-
-// 	if rType == "" {
-// 		runtime, err := guessRuntime()
-// 		if err != nil {
-// 			return err
-// 		}
-// 		rType = runtime
-// 	}
-// 	switch rType {
-// 	case "docker":
-// 		return runDocker()
-// 	case "kubernetes":
-// 		return runKubernetes()
-// 	case "vm":
-// 		fmt.Println("Not supported yet")
-// 	default:
-// 		fmt.Println("error")
-// 	}
-// 	return nil
-// }
 
 func formatJSON(data []byte) ([]byte, error) {
 	var out bytes.Buffer
@@ -409,7 +391,7 @@ func runDocker() error {
 			}
 		}
 
-		ws_names, err := getKongDump("kong-dump.yaml")
+		ws_names, err := getKongDump()
 
 		if err != nil {
 			log.Error("Kong dump unsuccessful: ", err)
@@ -503,7 +485,7 @@ func GetClient(opt utils.KongClientConfig) (*http.Client, string, error) {
 	return c, sanitizedAddress, nil
 }
 
-func getKongDump(fileToWrite string) ([]string, error) {
+func getKongDump() ([]string, error) {
 
 	var summaryInfo SummaryInfo
 	var finalResponse = make(map[string]interface{})
@@ -578,8 +560,15 @@ func getKongDump(fileToWrite string) ([]string, error) {
 	//Incomplete data as yet, but saving what we've collected so far incase of error during workspace iteration
 	finalResponse["summary_info"] = summaryInfo
 
+	if os.Getenv("ENABLE_CONFIG_DUMP") != "" {
+		createWorkspaceConfigDumps = (os.Getenv("ENABLE_CONFIG_DUMP") == "true")
+	}
+
 	for _, ws := range workspaces.Data {
-		ws_names = append(ws_names, ws.Name)
+		if createWorkspaceConfigDumps {
+			ws_names = append(ws_names, ws.Name)
+		}
+
 		client.SetWorkspace(ws.Name)
 		log.Debug("Workspace:", ws.Name)
 
@@ -602,16 +591,18 @@ func getKongDump(fileToWrite string) ([]string, error) {
 			summaryInfo.TotalEnabledDevPortalCount += 1
 		}
 
-		ks, err := state.Get(d)
-		if err != nil {
-			return nil, fmt.Errorf("building Kong dump state: %w", err)
-		}
-		err = file.KongStateToFile(ks, file.WriteConfig{
-			Filename:   ws.Name + "-" + fileToWrite,
-			FileFormat: file.YAML,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("building Kong dump file: %w", err)
+		if createWorkspaceConfigDumps {
+			ks, err := state.Get(d)
+			if err != nil {
+				return nil, fmt.Errorf("building Kong dump state: %w", err)
+			}
+			err = file.KongStateToFile(ks, file.WriteConfig{
+				Filename:   ws.Name + "-kong-dump.yaml",
+				FileFormat: file.YAML,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("building Kong dump file: %w", err)
+			}
 		}
 	}
 
@@ -628,6 +619,8 @@ func getKongDump(fileToWrite string) ([]string, error) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	//Clear workspace slice at this point if not writing dump files, otherwise app will try and add files to zip
 
 	return ws_names, nil
 }
@@ -743,7 +736,7 @@ func runKubernetes() error {
 			filesToZip = append(filesToZip, logFilenames...)
 		}
 
-		ws_names, err := getKongDump("kong-dump.yaml")
+		ws_names, err := getKongDump()
 		if err != nil {
 			log.Error("Kong dump unsuccessful: ", err)
 			//return err

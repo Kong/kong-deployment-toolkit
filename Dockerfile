@@ -20,6 +20,7 @@ RUN cp /tmp/deck /usr/local/bin/
 RUN curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl
 RUN install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 
-COPY --from=build /kdt/kdt /usr/local/bin/kdt
-WORKDIR "/tmp"
-CMD ["kdt"]
+COPY --from=build /kdt/kdt /usr/local/bin
+WORKDIR /kdt
+
+ENTRYPOINT ["kdt"]

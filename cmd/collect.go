@@ -181,6 +181,14 @@ func guessRuntime() (string, error) {
 		errList = append(errList, err.Error())
 	}
 
+	version, err := cli.ServerVersion(ctx)
+
+	log.Debug("Docker Version:", version.Arch)
+
+	if err != nil {
+		errList = append(errList, err.Error())
+	}
+
 	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{})
 	if err != nil {
 		errList = append(errList, err.Error())
@@ -230,6 +238,10 @@ func runDocker() error {
 		log.Error("Unable to create docker api client")
 		return err
 	}
+
+	// version, err := cli.ServerVersion(ctx)
+
+	// log.Debug("Docker Version:", version.Arch)
 
 	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{})
 	if err != nil {
@@ -367,12 +379,33 @@ func runDocker() error {
 					bytes := buf.Bytes()
 					var sanitizedBytes []byte
 
-					log.Debug("sanitizedBytes length:", len(bytes))
-
 					if len(bytes) > 7 {
-						sanitizedBytes = buf.Bytes()[8:]
-					} else {
-						sanitizedBytes = buf.Bytes()[len(bytes):]
+
+						B1 := bytes[0]
+						B2 := bytes[1]
+						B3 := bytes[2]
+						B4 := bytes[3]
+						B5 := bytes[4]
+						B6 := bytes[5]
+						B7 := bytes[6]
+
+						//A1 := byte(2)
+						A2 := byte(0)
+						A3 := byte(0)
+						A4 := byte(0)
+						A5 := byte(0)
+						A6 := byte(0)
+						//A7 := byte(0)
+
+						if B1 == byte(50) && B2 == byte(48) && B3 == byte(50) && B4 == byte(50) && B5 == byte(47) && B6 == byte(48) && B7 == byte(54) {
+							sanitizedBytes = bytes[8:]
+						} else if (B1 == byte(2) || B1 == byte(1)) && A2 == B2 && A3 == B3 && A4 == B4 && A5 == B5 && A6 == B6 && (B7 == byte(0) || B7 == byte(1)) {
+							sanitizedBytes = bytes[8:]
+						} else {
+							sanitizedBytes = bytes
+							// log.Debug(B1, B2, B3, B4, B5, B6, B7)
+							// log.Debug(string(bytes))
+						}
 					}
 
 					_, err = io.Copy(logFile, strings.NewReader(string(sanitizedBytes)+"\n"))

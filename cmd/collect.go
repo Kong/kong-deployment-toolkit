@@ -367,10 +367,12 @@ func runDocker() error {
 					bytes := buf.Bytes()
 					var sanitizedBytes []byte
 
+					log.Debug("sanitizedBytes length:", len(bytes))
+
 					if len(bytes) > 7 {
 						sanitizedBytes = buf.Bytes()[8:]
 					} else {
-						sanitizedBytes = buf.Bytes()[7:]
+						sanitizedBytes = buf.Bytes()[len(bytes):]
 					}
 
 					_, err = io.Copy(logFile, strings.NewReader(string(sanitizedBytes)+"\n"))

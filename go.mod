@@ -4,11 +4,11 @@ go 1.17
 
 require (
 	github.com/docker/docker v20.10.12+incompatible
-	github.com/imroc/req v0.3.2
 	github.com/kong/deck v1.12.0
 	github.com/kong/go-kong v0.29.0
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.8.1
+	github.com/spf13/cobra v1.4.0
 	github.com/ssgelm/cookiejarparser v1.0.1
 	github.com/stretchr/objx v0.2.0
 	k8s.io/api v0.23.4
@@ -71,7 +71,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20220216144756-c35f1ee13d7c // indirect
 	github.com/shirou/gopsutil/v3 v3.22.4 // indirect
-	github.com/spf13/cobra v1.4.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/testify v1.7.1 // indirect
 	github.com/tidwall/gjson v1.14.1 // indirect

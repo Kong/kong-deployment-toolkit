@@ -117,7 +117,9 @@ This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	PreRun: toggleDebug,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		rType = os.Getenv("KONG_RUNTIME")
+		if rType == "" {
+			rType = os.Getenv("KONG_RUNTIME")
+		}
 
 		if os.Getenv("LOG_LEVEL") == "debug" {
 			log.SetLevel(5)
@@ -154,9 +156,9 @@ var (
 func init() {
 	rootCmd.AddCommand(collectCmd)
 	collectCmd.PersistentFlags().StringVarP(&rType, "runtime", "r", "", "runtime")
-	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "gateway-images", "g", defaultKongImageList, "kong images")
-	collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, "mesh images")
-	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "deck-headers", "H", nil, "deck headers")
+	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "gateway-images", "g", defaultKongImageList, "List of gateway image names to look for")
+	collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, "List of mesh image names to look for")
+	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "deck-headers", "H", nil, "Headers associated")
 	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "", "http://localhost:8001", "kong addr")
 	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "config-dump", "c", false, "config dump")
 }
@@ -698,6 +700,7 @@ func createSummary(env map[string]string) Summary {
 }
 
 func runKubernetes() error {
+	log.Debug("Running Kubernetes")
 	ctx := context.Background()
 	var kongK8sPods []corev1.Pod
 	var filesToZip []string
@@ -716,9 +719,10 @@ func runKubernetes() error {
 	for _, p := range pl.Items {
 		for _, c := range p.Spec.Containers {
 			for _, i := range append(kongImages, meshImages...) {
+				log.Debug("Checking pod:", p.Name, "for image:", i)
 				if strings.Contains(c.Image, i) {
 					if !foundPod[p.Name] {
-						log.Debug("Appending: ", p.Name, " with containers: ", len(p.Spec.Containers))
+						log.Debug("Appending: ", p.Name, " with container count: ", len(p.Spec.Containers))
 						kongK8sPods = append(kongK8sPods, p)
 						foundPod[p.Name] = true
 					}

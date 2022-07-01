@@ -34,7 +34,7 @@ Examples of sensitive data that should be checked for include (but are not limit
 
 This tool runs with the privileges of the _executing user_ and does not elevate privileges at any time.
 
-## Environemnt Variables
+## Environment Variables
 `ENABLE_CONFIG_DUMP` - Enables dumping of workspace config. Default is to not create workspace config dumps.<br/>
 `KONG_ADDR` - For directing the collector to the address of the admin-api (Used to dump Kong config)<br/>
 `DECK_HEADERS` - As with deck, used for RBAC credential headers for admin-api<br/>

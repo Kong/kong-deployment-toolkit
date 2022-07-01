@@ -61,7 +61,7 @@ docker run \
 -e ENABLE_CONFIG_DUMP=true \
 -v ~/config_dumps:/kdt \
 -v /var/run/docker.sock:/var/run/docker.sock \
--v ~/.kube/docker_config:/kube/config \
+-v ~/.kube/config:/kube/config \
 --name kdt kdt:1.0
 ```
 This will show usage information. 

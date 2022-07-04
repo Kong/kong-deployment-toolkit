@@ -389,17 +389,12 @@ func runDocker() error {
 						B6 := bytes[5]
 						B7 := bytes[6]
 
-						//A1 := byte(2)
-						A2 := byte(0)
-						A3 := byte(0)
-						A4 := byte(0)
-						A5 := byte(0)
-						A6 := byte(0)
-						//A7 := byte(0)
+						zeroByte := byte(0)
 
+						//Remove header bytes from the docker cli log scans if they match specific patterns.
 						if B1 == byte(50) && B2 == byte(48) && B3 == byte(50) && B4 == byte(50) && B5 == byte(47) && B6 == byte(48) && B7 == byte(54) {
 							sanitizedBytes = bytes[8:]
-						} else if (B1 == byte(2) || B1 == byte(1)) && A2 == B2 && A3 == B3 && A4 == B4 && A5 == B5 && A6 == B6 && (B7 == byte(0) || B7 == byte(1)) {
+						} else if (B1 == byte(2) || B1 == byte(1)) && B2 == zeroByte && B3 == zeroByte && B4 == zeroByte && B5 == zeroByte && B6 == zeroByte && (B7 == zeroByte || B7 == byte(1)) {
 							sanitizedBytes = bytes[8:]
 						} else {
 							sanitizedBytes = bytes

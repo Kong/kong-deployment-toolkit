@@ -36,12 +36,7 @@ Examples of sensitive data that should be checked for include (but are not limit
 This tool runs with the privileges of the _executing user_ and does not elevate privileges at any time.
 
 ## Environment Variables
-`DUMP_WORKSPACE_CONFIGS` - Enables extraction of workspace config. Default is `false`.<br/>
-`KONG_ADDR` - For directing the collector to the address of the admin-api. Default is `http://localhost:8001`.<br/>
-`RBAC_HEADER` - Used for RBAC credentials for admin-api authentication.<br/>
-`KONG_RUNTIME` - Currently only `docker` and `kubernetes` are supported. If left empty, application will attempt to find one or the other.<br/>
 `KUBECONFIG` - Needs to point to a volume containing the `~/.kube/config` or similar kubernetes config file.<br/>
-`TARGET_PODS` - List of pod names in CSV format, used to target the extraction of logs from specific pods.<br/>
 
 `NOTE:` Either the docker socket or the kubeconfig file need to be added as a volume to the container in order to extract logs from either deployment framework.
 

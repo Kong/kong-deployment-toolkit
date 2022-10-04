@@ -1,8 +1,8 @@
-# Kong Debug Tool
+# Kong Deployment Toolkit
 
-A tool for collecting debug information for Kong Gateway and Kong Mesh / Kuma.
+A companion application to the Kong Gateway for extracting logs and config information for ease of collection and speedy case resolution.
 
-Currently supports docker and k8s deployments. Mesh and VM not currently supported.
+Currently supports docker and k8s deployments. VM installs not currently supported
 
 ## What is collected
 
@@ -18,7 +18,8 @@ The tool collects the following information and saves it as a `.tar.gz` file:
 - Docker inspect information for all Kuma / Kong Mesh control-plane instances (Docker)
 - Summary entity information for all workspaces (Not config, purely counts)
 - Status endpoint metrics
-- Workspace config dumps if `ENABLE_CONFIG_DUMP` is set to true
+- License endpoint metrics
+- Workspace config dumps if `DUMP_WORKSPACE_CONFIGS` is set to true
 
 ## Privacy 
 
@@ -35,42 +36,43 @@ Examples of sensitive data that should be checked for include (but are not limit
 This tool runs with the privileges of the _executing user_ and does not elevate privileges at any time.
 
 ## Environment Variables
-`ENABLE_CONFIG_DUMP` - Enables dumping of workspace config. Default is to not create workspace config dumps.<br/>
-`KONG_ADDR` - For directing the collector to the address of the admin-api (Used to dump Kong config)<br/>
-`DECK_HEADERS` - As with deck, used for RBAC credential headers for admin-api<br/>
-`LOG_LEVEL` - "debug" will enable debug logging on the stdout of the container, otherwise info level logging only.<br/>
-`KONG_RUNTIME` - Currently only 'docker' and 'kubernetes' are supported. IF left empty, application will attempt to find one or the other.<br/>
-`KUBECONFIG` - Needs to point to a volume containing the ~/.kube/config or similar kubernetes config file.<br/>
+`DUMP_WORKSPACE_CONFIGS` - Enables extraction of workspace config. Default is `false`.<br/>
+`KONG_ADDR` - For directing the collector to the address of the admin-api. Default is `http://localhost:8001`.<br/>
+`RBAC_HEADER` - Used for RBAC credentials for admin-api authentication.<br/>
+`KONG_RUNTIME` - Currently only `docker` and `kubernetes` are supported. If left empty, application will attempt to find one or the other.<br/>
+`KUBECONFIG` - Needs to point to a volume containing the `~/.kube/config` or similar kubernetes config file.<br/>
+`TARGET_PODS` - List of pod names in CSV format, used to target the extraction of logs from specific pods.<br/>
 
-Either the docker socket or the kubeconfig file need to be added as a volume to the container in order to extract logs from either deployment framework.
+`NOTE:` Either the docker socket or the kubeconfig file need to be added as a volume to the container in order to extract logs from either deployment framework.
 
 ## Volume Mounts
-`-v ~/config_dumps:/kdt` - Used to extract the dump files when they are collected. The KDT will put them in the /kdt directory.<br/>
+`-v ~/config_dumps:/kdt` - Used to extract the dump files when they are collected. The KDT will put them in the `/kdt` directory inside the container.<br/>
 `-v /var/run/docker.sock:/var/run/docker.sock` - Necessary if you are running Kong inside docker and want to extract logs.<br/>
 `-v ~/.kube/docker_config:/kube/config` - Necessary if you are running Kong in K8s. Used alongside the `KUBECONFIG` environment variable.<br/>
 
 ## Running the container
 
 ```
-docker run \
--e KONG_ADDR=https://admin-api.my.domain:8444 \
--e DECK_HEADERS=kong-admin-token:admin \
--e LOG_LEVEL=debug \
--e KONG_RUNTIME=docker \
+docker run --rm \
 -e KUBECONFIG=/kube/config \
--e ENABLE_CONFIG_DUMP=true \
 -v ~/config_dumps:/kdt \
 -v /var/run/docker.sock:/var/run/docker.sock \
 -v ~/.kube/config:/kube/config \
---name kdt kdt:1.0
+--name kdt kdt:1.0 collect
 ```
-This will show usage information. 
 
-`collect` is the only supported feature currently.
+## Commands
 
-The collect command will contact the k8s api obtained by the KUBECONFIG, or the Docker api obtained through the docker socket to retrieve the logs associated with all containers that are running one of our Kong images in either deployment environment.
-
-It will then bundle the files up and make them available in the /tmp path inside the container.
+| Command Name | Flags                    | Description                                                                                                  | Environment Variable Overrides |
+|--------------|--------------------------|--------------------------------------------------------------------------------------------------------------|--------------------------------|
+| collect      | --kong-addr              | The address to reach the admin-api of the Kong instance in question. Default: http://localhost:8001          | KONG_ADDR                      |
+|              | --rbac-header            | RBAC header required to contact the admin-api.                                                               | RBAC_HEADER                    |
+|              | --mesh-images            | Override default gateway images to scrape logs from. Default: "kong-gateway","kubernetes-ingress-controller" |                                |
+|              | --gateway-images         | Override default gateway images to scrape logs from. Default: "kuma-dp","kuma-cp","kuma-init"                |                                |
+|              | --dump-workspace-configs | Dump workspace configs to yaml files. Default: false.                                                        | DUMP_WORKSPACE_CONFIGS         |
+|              | --runtime                | Runtime to extract logs from (kubernetes or docker). Runtime is auto detected if omitted.                    | KONG_RUNTIME                   |
+|              | --target-pods            | CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.   | TARGET_PODS                    |
+|--------------|--------------------------|--------------------------------------------------------------------------------------------------------------|--------------------------------|
 
 ## Building the image
 

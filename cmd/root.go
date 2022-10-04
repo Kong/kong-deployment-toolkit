@@ -28,13 +28,9 @@ import (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "kdt",
-	Short: "A brief description of kdt",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Use:    "kdt",
+	Short:  "Kong debug tool",
+	Long:   `A tool for extracting logs, metrics and configuration data from your kong instances.`,
 	PreRun: toggleDebug,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
@@ -50,5 +46,5 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "verbose logging")
+	//rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "verbose logging")
 }

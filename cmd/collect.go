@@ -76,6 +76,7 @@ var (
 	kongImages                 []string
 	meshImages                 []string
 	deckHeaders                []string
+	targetPods                 []string
 	clientTimeout              time.Duration
 	rootConfig                 objx.Map
 	kongAddr                   string
@@ -108,25 +109,21 @@ type PortForwardAPodRequest struct {
 }
 
 var collectCmd = &cobra.Command{
-	Use:   "collect",
-	Short: "A brief description of your collect",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Use:    "collect",
+	Short:  "Collect Kong and Environment information",
+	Long:   `Collect Kong and Environment information.`,
 	PreRun: toggleDebug,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if rType == "" {
 			rType = os.Getenv("KONG_RUNTIME")
 		}
 
-		if os.Getenv("LOG_LEVEL") == "debug" {
-			log.SetLevel(5)
-		}
+		// if os.Getenv("LOG_LEVEL") == "debug" {
+		// 	log.SetLevel(5)
+		// }
 
 		if rType == "" {
-			log.Debug("No runtime detected, attempting to guess runtime...")
+			log.Info("No runtime detected, attempting to guess runtime...")
 			runtime, err := guessRuntime()
 			if err != nil {
 				return err
@@ -155,12 +152,13 @@ var (
 
 func init() {
 	rootCmd.AddCommand(collectCmd)
-	collectCmd.PersistentFlags().StringVarP(&rType, "runtime", "r", "", "runtime")
-	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "gateway-images", "g", defaultKongImageList, "List of gateway image names to look for")
-	collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, "List of mesh image names to look for")
-	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "deck-headers", "H", nil, "Headers associated")
-	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "", "http://localhost:8001", "kong addr")
-	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "config-dump", "c", false, "config dump")
+	collectCmd.PersistentFlags().StringVarP(&rType, "runtime", "r", "", "Runtime to extract logs from (kubernetes or docker). Runtime is auto detected if omitted.")
+	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "gateway-images", "g", defaultKongImageList, `Override default gateway images to scrape logs from. Default: "kuma-dp","kuma-cp","kuma-init"`)
+	collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, `Override default gateway images to scrape logs from. Default: "kong-gateway","kubernetes-ingress-controller"`)
+	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "rbac-header", "H", nil, "RBAC header required to contact the admin-api.")
+	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "a", "http://localhost:8001", "The address to reach the admin-api of the Kong instance in question.")
+	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "dump-workspace-configs", "c", false, "Dump workspace configs to yaml files. Default: false.")
+	collectCmd.PersistentFlags().StringSliceVarP(&targetPods, "target-pods", "p", nil, "CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.")
 }
 
 func formatJSON(data []byte) ([]byte, error) {
@@ -173,7 +171,7 @@ func formatJSON(data []byte) ([]byte, error) {
 }
 
 func guessRuntime() (string, error) {
-	log.Debug("Trying to guess runtime...")
+	log.Info("Trying to guess runtime...")
 	var errList []string
 	ctx := context.Background()
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -183,7 +181,7 @@ func guessRuntime() (string, error) {
 
 	version, err := cli.ServerVersion(ctx)
 
-	log.Debug("Docker Version:", version.Arch)
+	log.Info("Docker Version:", version.Arch)
 
 	if err != nil {
 		errList = append(errList, err.Error())
@@ -205,7 +203,7 @@ func guessRuntime() (string, error) {
 	}
 
 	if len(kongContainers) > 0 {
-		log.Debug("found Docker")
+		log.Info("found Docker")
 		return Docker, nil
 	}
 
@@ -224,7 +222,7 @@ func guessRuntime() (string, error) {
 	}
 
 	if len(kongK8sPods) > 0 {
-		log.Debug("found Kubernetes")
+		log.Info("found Kubernetes")
 		return Kubernetes, nil
 	}
 
@@ -241,15 +239,15 @@ func runDocker() error {
 
 	// version, err := cli.ServerVersion(ctx)
 
-	// log.Debug("Docker Version:", version.Arch)
+	// log.Info("Docker Version:", version.Arch)
 
 	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{})
 	if err != nil {
-		log.Error("Unable to get container list from docker api")
+		log.Error("Unable to get container list from docker api", err.Error())
 		return err
 	}
 
-	log.Debug("Found: ", len(containers), " containers running")
+	log.Info("Found: ", len(containers), " containers running")
 
 	var kongContainers []types.Container
 
@@ -264,7 +262,7 @@ func runDocker() error {
 	var filesToZip []string
 
 	for _, c := range kongContainers {
-		j, b, err := cli.ContainerInspectWithRaw(ctx, c.ID, false)
+		_, b, err := cli.ContainerInspectWithRaw(ctx, c.ID, false)
 		if err != nil {
 			log.Error("Unable to inspect container:", err)
 			continue
@@ -278,50 +276,50 @@ func runDocker() error {
 			//return err
 		}
 
-		env := make(map[string]string)
+		// env := make(map[string]string)
 
-		for _, v := range j.Config.Env {
-			s := strings.SplitN(v, "=", 2)
-			env[s[0]] = s[1]
-		}
+		// for _, v := range j.Config.Env {
+		// 	s := strings.SplitN(v, "=", 2)
+		// 	env[s[0]] = s[1]
+		// }
 
-		sum := createSummary(env)
-		sum.Platform = "Docker"
+		// sum := createSummary(env)
+		// sum.Platform = "Docker"
 
-		sumBytes := []byte(fmt.Sprintf(
-			`Environment Summary:
-			- Platform: %s
-			- Kong Version: %s
-			- Vitals: %s
-			- Portal: %s
-			- DB Mode: %s
-			`, sum.Platform, sum.Version, sum.Vitals, sum.Portal, sum.DBMode))
+		// sumBytes := []byte(fmt.Sprintf(
+		// 	`Environment Summary:
+		// 	- Platform: %s
+		// 	- Kong Version: %s
+		// 	- Vitals: %s
+		// 	- Portal: %s
+		// 	- DB Mode: %s
+		// 	`, sum.Platform, sum.Version, sum.Vitals, sum.Portal, sum.DBMode))
 
-		summaryFile, err := os.Create("Summary.txt")
-		defer summaryFile.Close()
+		// summaryFile, err := os.Create("Summary.txt")
+		// defer summaryFile.Close()
 
-		if err != nil {
-			log.Error("Unable to create summary file:", err)
-			continue
-			//return err
-		} else {
-			log.Debug("writing summary data")
-			_, err = io.Copy(summaryFile, bytes.NewReader(sumBytes))
-			if err != nil {
-				log.Error("Unable to write to summary file:", err)
-				continue
-				//return err
-			} else {
-				err = summaryFile.Close()
-				if err != nil {
-					log.Error("Unable to close summary file:", err)
-					continue
-					//return err
-				} else {
-					filesToZip = append(filesToZip, "Summary.txt")
-				}
-			}
-		}
+		// if err != nil {
+		// 	log.Error("Unable to create summary file:", err)
+		// 	continue
+		// 	//return err
+		// } else {
+		// 	log.Info("writing summary data")
+		// 	_, err = io.Copy(summaryFile, bytes.NewReader(sumBytes))
+		// 	if err != nil {
+		// 		log.Error("Unable to write to summary file:", err)
+		// 		continue
+		// 		//return err
+		// 	} else {
+		// 		err = summaryFile.Close()
+		// 		if err != nil {
+		// 			log.Error("Unable to close summary file:", err)
+		// 			continue
+		// 			//return err
+		// 		} else {
+		// 			filesToZip = append(filesToZip, "Summary.txt")
+		// 		}
+		// 	}
+		// }
 
 		sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(c.Image, ":", "/"), "/", "-")
 		sanitizedContainerName := strings.ReplaceAll(c.Names[0], "/", "")
@@ -334,7 +332,7 @@ func runDocker() error {
 			continue
 			//return err
 		} else {
-			log.Debugf("writing docker inspect data for %s", sanitizedContainerName)
+			log.Infof("writing docker inspect data for %s", sanitizedContainerName)
 			_, err = io.Copy(inspectFile, bytes.NewReader(prettyJSON))
 			if err != nil {
 				log.Error("Unable to write inspect file:", err)
@@ -370,7 +368,7 @@ func runDocker() error {
 				continue
 				//return err
 			} else {
-				log.Debugf("writing docker logs data for %s", sanitizedContainerName)
+				log.Infof("writing docker logs data for %s", sanitizedContainerName)
 
 				buf := bufio.NewScanner(logs)
 
@@ -398,8 +396,8 @@ func runDocker() error {
 							sanitizedBytes = bytes[8:]
 						} else {
 							sanitizedBytes = bytes
-							// log.Debug(B1, B2, B3, B4, B5, B6, B7)
-							// log.Debug(string(bytes))
+							// log.Info(B1, B2, B3, B4, B5, B6, B7)
+							// log.Info(string(bytes))
 						}
 					}
 
@@ -438,7 +436,7 @@ func runDocker() error {
 
 	}
 
-	log.Debugf("Writing tar.gz output")
+	log.Infof("Writing tar.gz output")
 	err = writeFiles(filesToZip)
 	if err != nil {
 		return err
@@ -519,21 +517,25 @@ func GetClient(opt utils.KongClientConfig) (*http.Client, string, error) {
 
 func getKongDump() ([]string, error) {
 
+	//Responsible for creating the KDD.json object
+
+	//Generate KDD file
+
+	//Generate Workspace Dumps
+
 	var summaryInfo SummaryInfo
 	var finalResponse = make(map[string]interface{})
 
-	endpoint := os.Getenv("KONG_ADDR")
-
-	if endpoint == "" {
-		endpoint = kongAddr
+	if os.Getenv("KONG_ADDR") != "" {
+		kongAddr = os.Getenv("KONG_ADDR")
 	}
 
-	if os.Getenv("DECK_HEADERS") != "" {
-		deckHeaders = strings.Split(os.Getenv("DECK_HEADERS"), ",")
+	if os.Getenv("RBAC_HEADER") != "" {
+		deckHeaders = strings.Split(os.Getenv("RBAC_HEADER"), ",")
 	}
 
 	client, err := utils.GetKongClient(utils.KongClientConfig{
-		Address:       endpoint,
+		Address:       kongAddr,
 		TLSSkipVerify: true,
 		Debug:         false,
 		Headers:       deckHeaders,
@@ -592,8 +594,8 @@ func getKongDump() ([]string, error) {
 	//Incomplete data as yet, but saving what we've collected so far incase of error during workspace iteration
 	finalResponse["summary_info"] = summaryInfo
 
-	if os.Getenv("ENABLE_CONFIG_DUMP") != "" {
-		createWorkspaceConfigDumps = (os.Getenv("ENABLE_CONFIG_DUMP") == "true")
+	if os.Getenv("DUMP_WORKSPACE_CONFIGS") != "" {
+		createWorkspaceConfigDumps = (os.Getenv("DUMP_WORKSPACE_CONFIGS") == "false")
 	}
 
 	for _, ws := range workspaces.Data {
@@ -602,7 +604,7 @@ func getKongDump() ([]string, error) {
 		}
 
 		client.SetWorkspace(ws.Name)
-		log.Debug("Workspace:", ws.Name)
+		log.Info("Workspace:", ws.Name)
 
 		d, err := dump.Get(context.Background(), client, dump.Config{
 			RBACResourcesOnly: false,
@@ -705,32 +707,32 @@ func getWorkspaces(client *kong.Client) (*Workspaces, error) {
 	return &w, nil
 }
 
-func createSummary(env map[string]string) Summary {
-	s := Summary{
-		Version: "Unknown",
-		Portal:  "off",
-		Vitals:  "off",
-		DBMode:  "off",
-	}
-	for k, v := range env {
-		switch k {
-		case "KONG_DATABASE":
-			s.DBMode = v
-		case "KONG_PORTAL":
-			s.Portal = v
-		case "KONG_VITALS":
-			s.Vitals = v
-		case "KONG_VERSION":
-			s.Version = v
-		default:
-		}
-	}
+// func createSummary(env map[string]string) Summary {
+// 	s := Summary{
+// 		Version: "Unknown",
+// 		Portal:  "off",
+// 		Vitals:  "off",
+// 		DBMode:  "off",
+// 	}
+// 	for k, v := range env {
+// 		switch k {
+// 		case "KONG_DATABASE":
+// 			s.DBMode = v
+// 		case "KONG_PORTAL":
+// 			s.Portal = v
+// 		case "KONG_VITALS":
+// 			s.Vitals = v
+// 		case "KONG_VERSION":
+// 			s.Version = v
+// 		default:
+// 		}
+// 	}
 
-	return s
-}
+// 	return s
+// }
 
 func runKubernetes() error {
-	log.Debug("Running Kubernetes")
+	log.Info("Running Kubernetes")
 	ctx := context.Background()
 	var kongK8sPods []corev1.Pod
 	var filesToZip []string
@@ -743,18 +745,41 @@ func runKubernetes() error {
 
 	pl, err := kubeClient.CoreV1().Pods("").List(ctx, v1.ListOptions{})
 
+	if os.Getenv("TARGET_PODS") != "" {
+		targetPods = strings.Split(os.Getenv("TARGET_PODS"), ",")
+	}
+
 	//To keep track of whether a particular pod has been added already. As a pod with an ingress-controller image and a kong-gateway image will be added twice to the kongK8sPods slice
 	foundPod := make(map[string]bool)
 
 	for _, p := range pl.Items {
-		for _, c := range p.Spec.Containers {
-			for _, i := range append(kongImages, meshImages...) {
-				log.Debug("Checking pod:", p.Name, "for image:", i)
-				if strings.Contains(c.Image, i) {
-					if !foundPod[p.Name] {
-						log.Debug("Appending: ", p.Name, " with container count: ", len(p.Spec.Containers))
-						kongK8sPods = append(kongK8sPods, p)
-						foundPod[p.Name] = true
+		if len(targetPods) > 0 {
+			for _, podName := range targetPods {
+				if strings.ToLower(podName) == strings.ToLower(p.Name) {
+					for _, c := range p.Spec.Containers {
+						for _, i := range append(kongImages, meshImages...) {
+							log.Info("Checking pod: ", p.Name, " for image:", i)
+							if strings.Contains(c.Image, i) {
+								if !foundPod[p.Name] {
+									log.Info("Appending: ", p.Name, " with container count: ", len(p.Spec.Containers))
+									kongK8sPods = append(kongK8sPods, p)
+									foundPod[p.Name] = true
+								}
+							}
+						}
+					}
+				}
+			}
+		} else {
+			for _, c := range p.Spec.Containers {
+				for _, i := range append(kongImages, meshImages...) {
+					log.Info("Checking pod: ", p.Name, " for image:", i)
+					if strings.Contains(c.Image, i) {
+						if !foundPod[p.Name] {
+							log.Info("Appending: ", p.Name, " with container count: ", len(p.Spec.Containers))
+							kongK8sPods = append(kongK8sPods, p)
+							foundPod[p.Name] = true
+						}
 					}
 				}
 			}
@@ -765,7 +790,7 @@ func runKubernetes() error {
 		logFilenames, err := writePodDetails(ctx, kubeClient, kongK8sPods)
 
 		if err != nil {
-			log.Error("There was an error writing pod details: ", err)
+			log.Error("There was an error writing pod details: ", err.Error())
 		} else {
 			filesToZip = append(filesToZip, logFilenames...)
 		}
@@ -789,7 +814,7 @@ func runKubernetes() error {
 
 		}
 	} else {
-		log.Info("No Kong pods found in cluster")
+		log.Info("No pods with the appropriate container images found in cluster")
 	}
 
 	return nil
@@ -826,11 +851,11 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 			continue
 		}
 
-		log.Debug("Working on Pod: ", p.Name, " in namespace: ", p.Namespace)
+		log.Info("Working on Pod: ", p.Name, " in namespace: ", p.Namespace)
 
 		//for _, container := range append(p.Spec.InitContainers, p.Spec.Containers...) {
 		for _, container := range p.Spec.Containers {
-			log.Debug("Working on container: ", container.Name)
+			log.Info("Working on container: ", container.Name)
 
 			podLogOpts := corev1.PodLogOptions{Container: container.Name}
 			// podLogOpts.TailLines = &[]int64{int64(100)}[0]
@@ -874,47 +899,47 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 
 			logFilenames = append(logFilenames, logsFilename)
 
-			env := make(map[string]string)
+			// env := make(map[string]string)
 
-			if container.Name == "proxy" {
-				for _, v := range container.Env {
-					env[v.Name] = v.Value
-				}
-				sum := createSummary(env)
-				sum.Platform = "Kubernetes"
+			// if container.Name == "proxy" {
+			// 	for _, v := range container.Env {
+			// 		env[v.Name] = v.Value
+			// 	}
+			// 	sum := createSummary(env)
+			// 	sum.Platform = "Kubernetes"
 
-				sumBytes := []byte(fmt.Sprintf(
-					`Environment Summary:
-					- Platform: %s
-					- Kong Version: %s
-					- Vitals: %s
-					- Portal: %s
-					- DB Mode: %s
-					`, sum.Platform, sum.Version, sum.Vitals, sum.Portal, sum.DBMode))
+			// 	sumBytes := []byte(fmt.Sprintf(
+			// 		`Environment Summary:
+			// 		- Platform: %s
+			// 		- Kong Version: %s
+			// 		- Vitals: %s
+			// 		- Portal: %s
+			// 		- DB Mode: %s
+			// 		`, sum.Platform, sum.Version, sum.Vitals, sum.Portal, sum.DBMode))
 
-				summaryFile, err := os.Create("Summary.txt")
-				if err != nil {
-					log.Error(err)
-					//return logFilenames, err
-					continue
-				}
+			// 	summaryFile, err := os.Create("Summary.txt")
+			// 	if err != nil {
+			// 		log.Error(err)
+			// 		//return logFilenames, err
+			// 		continue
+			// 	}
 
-				log.Debug("Writing summary data for: ", container.Name)
-				_, err = io.Copy(summaryFile, bytes.NewReader(sumBytes))
-				if err != nil {
-					log.Error(err)
-					//return logFilenames, err
-					continue
-				}
+			// 	log.Info("Writing summary data for: ", container.Name)
+			// 	_, err = io.Copy(summaryFile, bytes.NewReader(sumBytes))
+			// 	if err != nil {
+			// 		log.Error(err)
+			// 		//return logFilenames, err
+			// 		continue
+			// 	}
 
-				err = summaryFile.Close()
-				if err != nil {
-					log.Error(err)
-					//return logFilenames, err
-					continue
-				}
-				logFilenames = append(logFilenames, "Summary.txt")
-			}
+			// 	err = summaryFile.Close()
+			// 	if err != nil {
+			// 		log.Error(err)
+			// 		//return logFilenames, err
+			// 		continue
+			// 	}
+			// 	logFilenames = append(logFilenames, "Summary.txt")
+			// }
 		}
 
 		podDefFileName := fmt.Sprintf("%s.yaml", p.Name)

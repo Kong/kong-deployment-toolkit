@@ -72,7 +72,6 @@ docker run --rm \
 |              | --dump-workspace-configs | Dump workspace configs to yaml files. Default: false.                                                        | DUMP_WORKSPACE_CONFIGS         |
 |              | --runtime                | Runtime to extract logs from (kubernetes or docker). Runtime is auto detected if omitted.                    | KONG_RUNTIME                   |
 |              | --target-pods            | CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.   | TARGET_PODS                    |
-|--------------|--------------------------|--------------------------------------------------------------------------------------------------------------|--------------------------------|
 
 ## Building the image
 

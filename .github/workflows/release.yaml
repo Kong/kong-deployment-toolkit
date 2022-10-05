@@ -8,12 +8,13 @@ on:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+	name: testing github actions
     steps:
-      - name: HelloWorld
-        uses: actions/hello-world-docker-action@v1
-        with:
-          who-to-greet: 'hello from kdt'
       - name: Checkout
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+      - name: HelloWorld
+        uses: actions/hello-world-docker-action@v1
+        with:
+          who-to-greet: 'hello from kdt'

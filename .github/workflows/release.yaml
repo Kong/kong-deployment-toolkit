@@ -1,0 +1,19 @@
+name: release
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: HelloWorld
+        uses: actions/hello-world-docker-action@v1
+        with:
+          who-to-greet: 'hello from kdt'
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0

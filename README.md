@@ -2,7 +2,7 @@
 
 A companion application to the Kong Gateway for extracting logs and config information for ease of collection and speedy case resolution.
 
-Currently supports docker and k8s deployments. VM installs not currently supported
+Currently supports docker and k8s deployments. VM installs not currently supported.
 
 ## What is collected
 
@@ -67,6 +67,8 @@ docker run --rm \
 |              | --dump-workspace-configs | Dump workspace configs to yaml files. Default: false.                                                        | DUMP_WORKSPACE_CONFIGS         |
 |              | --runtime                | Runtime to extract logs from (kubernetes or docker). Runtime is auto detected if omitted.                    | KONG_RUNTIME                   |
 |              | --target-pods            | CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.   | TARGET_PODS                    |
+|              | --since                  | Return logs newer than a relative duration like 5s, 2m, or 3h. Default is 24h of logs. Docker only.          | LOGS_SINCE                     |
+|              | --since-seconds          | Return logs newer than the seconds past. Defaults to 86400. The last 24hrs of logs. K8s only.                | LOGS_SINCE_SECONDS             |
 
 ## Building the image
 
@@ -74,4 +76,20 @@ To build the image
 
 ```
 docker build . -t kdt:1.0
+```
+```
+make build-docker
+```
+
+## Building the binary
+
+```
+make build-macos
+```
+or
+```
+env GOOS=darwin GOARCH=amd64 go build -o bin/kdt
+```
+```
+make build-linux
 ```

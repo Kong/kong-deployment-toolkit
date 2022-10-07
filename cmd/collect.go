@@ -32,6 +32,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +78,8 @@ var (
 	meshImages                 []string
 	deckHeaders                []string
 	targetPods                 []string
+	logsSinceDocker            string
+	logsSinceSeconds           int64
 	clientTimeout              time.Duration
 	rootConfig                 objx.Map
 	kongAddr                   string
@@ -159,6 +162,8 @@ func init() {
 	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "a", "http://localhost:8001", "The address to reach the admin-api of the Kong instance in question.")
 	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "dump-workspace-configs", "c", false, "Dump workspace configs to yaml files. Default: false.")
 	collectCmd.PersistentFlags().StringSliceVarP(&targetPods, "target-pods", "p", nil, "CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.")
+	collectCmd.PersistentFlags().StringVar(&logsSinceDocker, "since", "24h", "Return logs newer than a relative duration like 5s, 2m, or 3h. Default is 24h of logs")
+	collectCmd.PersistentFlags().Int64Var(&logsSinceSeconds, "since-seconds", 86400, "Return logs newer than the seconds past. Defaults to 86400. The last 24hrs of logs")
 }
 
 func formatJSON(data []byte) ([]byte, error) {
@@ -359,7 +364,12 @@ func runDocker() error {
 			continue
 			//return err
 		} else {
-			options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true}
+
+			if os.Getenv("LOGS_SINCE") != "" {
+				logsSinceDocker = os.Getenv("LOGS_SINCE")
+			}
+
+			options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Since: logsSinceDocker, Details: true}
 			logs, err := cli.ContainerLogs(ctx, c.ID, options)
 
 			defer logs.Close()
@@ -857,7 +867,13 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 		for _, container := range p.Spec.Containers {
 			log.Info("Working on container: ", container.Name)
 
-			podLogOpts := corev1.PodLogOptions{Container: container.Name}
+			if os.Getenv("LOGS_SINCE_SECONDS") != "" {
+				logsSinceSeconds, err = strconv.ParseInt(os.Getenv("LOGS_SINCE_SECONDS"), 10, 64)
+			}
+
+			//options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Since: logsSinceSeconds, Details: true}
+
+			podLogOpts := corev1.PodLogOptions{Container: container.Name, SinceSeconds: &logsSinceSeconds}
 			// podLogOpts.TailLines = &[]int64{int64(100)}[0]
 			podLogs, err := clientSet.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &podLogOpts).Stream(ctx)
 			if err != nil {

@@ -83,13 +83,18 @@ make build-docker
 
 ## Building the binary
 
+MacOS
 ```
 make build-macos
 ```
-or
 ```
 env GOOS=darwin GOARCH=amd64 go build -o bin/kdt
 ```
+
+Linux
 ```
 make build-linux
+```
+```
+env GOOS=linux GOARCH=amd64 go build -o bin/kdt
 ```

@@ -24,9 +24,12 @@ kdt
 
 .idea/
 *.tar.gz
+
 *.yaml
 *.log
 *.json
 *.txt
 cbr.sh
 Archive/
+
+!.github/workflows/*.yaml

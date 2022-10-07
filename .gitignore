@@ -24,6 +24,7 @@ kdt
 
 .idea/
 *.tar.gz
+.DS_Store
 
 *.yaml
 *.log

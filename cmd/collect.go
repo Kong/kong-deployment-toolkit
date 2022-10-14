@@ -73,11 +73,12 @@ const (
 )
 
 var (
-	rType                      string
-	kongImages                 []string
-	meshImages                 []string
+	rType      string
+	kongImages []string
+	//meshImages                 []string
 	deckHeaders                []string
 	targetPods                 []string
+	kongConf                   string
 	logsSinceDocker            string
 	logsSinceSeconds           int64
 	clientTimeout              time.Duration
@@ -140,7 +141,7 @@ var collectCmd = &cobra.Command{
 		case "kubernetes":
 			return runKubernetes()
 		case "vm":
-			log.Warn("Not supported yet")
+			return runVM()
 		default:
 			log.Error("Runtime not found:", rType)
 		}
@@ -149,21 +150,22 @@ var collectCmd = &cobra.Command{
 }
 
 var (
-	defaultKongImageList = []string{"kong-gateway", "kubernetes-ingress-controller"}
-	defaultMeshImageList = []string{"kuma-dp", "kuma-cp", "kuma-init"}
+	defaultKongImageList = []string{"kong-gateway", "kubernetes-ingress-controller", "kuma-dp", "kuma-cp", "kuma-init"}
+	//defaultMeshImageList = []string{}
 )
 
 func init() {
 	rootCmd.AddCommand(collectCmd)
 	collectCmd.PersistentFlags().StringVarP(&rType, "runtime", "r", "", "Runtime to extract logs from (kubernetes or docker). Runtime is auto detected if omitted.")
-	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "gateway-images", "g", defaultKongImageList, `Override default gateway images to scrape logs from. Default: "kuma-dp","kuma-cp","kuma-init"`)
-	collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, `Override default gateway images to scrape logs from. Default: "kong-gateway","kubernetes-ingress-controller"`)
+	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "target-images", "i", defaultKongImageList, `Override default gateway images to scrape logs from. Default: "kong-gateway","kubernetes-ingress-controller","kuma-dp","kuma-cp","kuma-init"`)
+	//collectCmd.PersistentFlags().StringSliceVarP(&meshImages, "mesh-images", "m", defaultMeshImageList, `Override default gateway images to scrape logs from. Default: "kong-gateway","kubernetes-ingress-controller"`)
 	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "rbac-header", "H", nil, "RBAC header required to contact the admin-api.")
 	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "a", "http://localhost:8001", "The address to reach the admin-api of the Kong instance in question.")
-	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "dump-workspace-configs", "c", false, "Dump workspace configs to yaml files. Default: false.")
+	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "dump-workspace-configs", "d", false, "Dump workspace configs to yaml files. Default: false.")
 	collectCmd.PersistentFlags().StringSliceVarP(&targetPods, "target-pods", "p", nil, "CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.")
-	collectCmd.PersistentFlags().StringVar(&logsSinceDocker, "since", "24h", "Return logs newer than a relative duration like 5s, 2m, or 3h. Default is 24h of logs")
-	collectCmd.PersistentFlags().Int64Var(&logsSinceSeconds, "since-seconds", 86400, "Return logs newer than the seconds past. Defaults to 86400. The last 24hrs of logs")
+	collectCmd.PersistentFlags().StringVar(&logsSinceDocker, "since", "24h", "Return logs newer than a relative duration like 5s, 2m, or 3h. Default is 24h of logs. Used with docker runtime only.")
+	collectCmd.PersistentFlags().Int64Var(&logsSinceSeconds, "since-seconds", 86400, "Return logs newer than the seconds past. Defaults to 86400, the last 24hrs of logs. Used with K8s runtime only.")
+	collectCmd.PersistentFlags().StringVarP(&kongConf, "kong-conf", "c", "", "The path to your kong.conf file. eg: /usr/local/kong/kong.conf")
 }
 
 func formatJSON(data []byte) ([]byte, error) {
@@ -218,7 +220,8 @@ func guessRuntime() (string, error) {
 	pl, err := kubeClient.CoreV1().Pods("").List(context.Background(), v1.ListOptions{})
 	for _, p := range pl.Items {
 		for _, c := range p.Spec.Containers {
-			for _, i := range append(kongImages, meshImages...) {
+			//for _, i := range append(kongImages, meshImages...) {
+			for _, i := range kongImages {
 				if strings.Contains(c.Image, i) {
 					kongK8sPods = append(kongK8sPods, p.Name)
 				}
@@ -257,7 +260,7 @@ func runDocker() error {
 	var kongContainers []types.Container
 
 	for _, container := range containers {
-		for _, i := range append(kongImages, meshImages...) {
+		for _, i := range kongImages {
 			if strings.Contains(container.Image, i) {
 				kongContainers = append(kongContainers, container)
 			}
@@ -767,7 +770,7 @@ func runKubernetes() error {
 			for _, podName := range targetPods {
 				if strings.ToLower(podName) == strings.ToLower(p.Name) {
 					for _, c := range p.Spec.Containers {
-						for _, i := range append(kongImages, meshImages...) {
+						for _, i := range kongImages {
 							log.Info("Checking pod: ", p.Name, " for image:", i)
 							if strings.Contains(c.Image, i) {
 								if !foundPod[p.Name] {
@@ -782,7 +785,7 @@ func runKubernetes() error {
 			}
 		} else {
 			for _, c := range p.Spec.Containers {
-				for _, i := range append(kongImages, meshImages...) {
+				for _, i := range kongImages {
 					log.Info("Checking pod: ", p.Name, " for image:", i)
 					if strings.Contains(c.Image, i) {
 						if !foundPod[p.Name] {
@@ -831,6 +834,30 @@ func runKubernetes() error {
 }
 
 func runVM() error {
+	//Read kong.conf file if --vm-conf-path is directed as the path to the kong.conf file
+	log.Info("Running in VM mode.")
+
+	if kongConf != "" {
+		log.Info("Reading config file.")
+		d, err := os.ReadFile(kongConf)
+
+		if err != nil {
+			log.Error("Error reading config file:", err.Error())
+			return err
+		}
+
+		lines := strings.Split(string(d), "\n")
+
+		var setConfig []string
+
+		for _, line := range lines {
+			if len(line) > 0 && line[0] != '#' {
+				setConfig = append(setConfig, line)
+			}
+		}
+	}
+
+	//var output map[string]bool = make(map[string]bool)
 
 	return nil
 }

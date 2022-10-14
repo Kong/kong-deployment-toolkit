@@ -58,17 +58,17 @@ docker run --rm \
 
 ## Commands
 
-| Command Name | Flags                    | Description                                                                                                  | Environment Variable Overrides |
-|--------------|--------------------------|--------------------------------------------------------------------------------------------------------------|--------------------------------|
-| collect      | --kong-addr              | The address to reach the admin-api of the Kong instance in question. Default: http://localhost:8001          | KONG_ADDR                      |
-|              | --rbac-header            | RBAC header required to contact the admin-api.                                                               | RBAC_HEADER                    |
-|              | --mesh-images            | Override default gateway images to scrape logs from. Default: "kong-gateway","kubernetes-ingress-controller" |                                |
-|              | --gateway-images         | Override default gateway images to scrape logs from. Default: "kuma-dp","kuma-cp","kuma-init"                |                                |
-|              | --dump-workspace-configs | Dump workspace configs to yaml files. Default: false.                                                        | DUMP_WORKSPACE_CONFIGS         |
-|              | --runtime                | Runtime to extract logs from (kubernetes or docker). Runtime is auto detected if omitted.                    | KONG_RUNTIME                   |
-|              | --target-pods            | CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.   | TARGET_PODS                    |
-|              | --since                  | Return logs newer than a relative duration like 5s, 2m, or 3h. Default is 24h of logs. Docker only.          | LOGS_SINCE                     |
-|              | --since-seconds          | Return logs newer than the seconds past. Defaults to 86400. The last 24hrs of logs. K8s only.                | LOGS_SINCE_SECONDS             |
+| Command Name | Flags                    | Description                                                                                                                          | Environment Variable Overrides |
+|--------------|--------------------------|--------------------------------------------------------------------------------------------------------------------------------------|--------------------------------|
+| collect      | --kong-addr              | The address to reach the admin-api of the Kong instance in question. Default: http://localhost:8001                                  | KONG_ADDR                      |
+|              | --rbac-header            | RBAC header required to contact the admin-api.                                                                                       | RBAC_HEADER                    |
+|              | --target-images          | Override default images to scrape logs from. Default: "kong-gateway","kubernetes-ingress-controller","kuma-dp","kuma-cp","kuma-init" |                                |
+|              | --kong-conf              | Path to kong.conf file for VM config and log retrieval. VM runtime only.                                                             |                                |
+|              | --dump-workspace-configs | Dump workspace configs to yaml files. Default: false.                                                                                | DUMP_WORKSPACE_CONFIGS         |
+|              | --runtime                | Runtime to extract logs from (kubernetes or docker). Runtime is auto detected if omitted.                                            | KONG_RUNTIME                   |
+|              | --target-pods            | CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.                           | TARGET_PODS                    |
+|              | --since                  | Return logs newer than a relative duration like 5s, 2m, or 3h. Default is 24h of logs. Docker only.                                  | LOGS_SINCE                     |
+|              | --since-seconds          | Return logs newer than the seconds past. Defaults to 86400. The last 24hrs of logs. K8s only.                                        | LOGS_SINCE_SECONDS             |
 
 ## Building the image
 

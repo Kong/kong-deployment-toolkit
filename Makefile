@@ -7,7 +7,7 @@ build-macos:
 	env GOOS=darwin GOARCH=amd64 go build -o bin/kdt
 
 build-linux:
-    env GOOS=linux GOARCH=amd64 go build -o bin/kdt
+	env GOOS=linux GOARCH=amd64 go build -o bin/kdt
 	
 clean:
 	rm -f $(wildcard *.yaml)

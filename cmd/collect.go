@@ -70,10 +70,10 @@ import (
 )
 
 const (
-	Docker             = "docker"
-	Kubernetes         = "kubernetes"
-	VM                 = "vm"
-	vmLineLimitDefault = int64(1000)
+	Docker           = "docker"
+	Kubernetes       = "kubernetes"
+	VM               = "vm"
+	LineLimitDefault = int64(1000)
 )
 
 var (
@@ -84,7 +84,7 @@ var (
 	kongConf                   string
 	prefixDir                  string
 	logsSinceDocker            string
-	vmLineLimit                int64
+	lineLimit                  int64
 	logsSinceSeconds           int64
 	clientTimeout              time.Duration
 	rootConfig                 objx.Map
@@ -207,12 +207,12 @@ func init() {
 	collectCmd.PersistentFlags().StringSliceVarP(&kongImages, "target-images", "i", defaultKongImageList, `Override default gateway/mesh images to scrape logs from. Default: "kong-gateway","kubernetes-ingress-controller","kuma-dp","kuma-cp","kuma-init"`)
 	collectCmd.PersistentFlags().StringSliceVarP(&deckHeaders, "rbac-header", "H", nil, "RBAC header required to contact the admin-api.")
 	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "a", "http://localhost:8001", "The address to reach the admin-api of the Kong instance in question.")
-	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "dump-workspace-configs", "d", false, "Dump workspace configs to yaml files. Default: false. NOTE: Will not work if --disable-kdd=true")
+	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "dump-workspace-configs", "d", false, "Deck dump workspace configs to yaml files. Default: false. NOTE: Will not work if --disable-kdd=true")
 	collectCmd.PersistentFlags().StringSliceVarP(&targetPods, "target-pods", "p", nil, "CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.")
-	collectCmd.PersistentFlags().StringVar(&logsSinceDocker, "docker-since", "24h", "Return logs newer than a relative duration like 5s, 2m, or 3h. Default is 24h of logs. Used with docker runtime only.")
-	collectCmd.PersistentFlags().Int64Var(&logsSinceSeconds, "k8s-since-seconds", 86400, "Return logs newer than the seconds past. Defaults to 86400, the last 24hrs of logs. Used with K8s runtime only.")
-	collectCmd.PersistentFlags().Int64Var(&vmLineLimit, "vm-line-limit", vmLineLimitDefault, "Return logs with this amount of lines retrieved. Defaults to 1000 lines. Used with VM runtime only.")
-	collectCmd.PersistentFlags().StringVarP(&prefixDir, "prefix-dir", "k", "/usr/local/kong", "The path to your prefix directory. Default: /usr/local/kong")
+	collectCmd.PersistentFlags().StringVar(&logsSinceDocker, "docker-since", "", "Return logs newer than a relative duration like 5s, 2m, or 3h. Used with docker runtime only. Will override --line-limit if set.")
+	collectCmd.PersistentFlags().Int64Var(&logsSinceSeconds, "k8s-since-seconds", 0, "Return logs newer than the seconds past. Used with K8s runtime only. Will override --line-limit if set.")
+	collectCmd.PersistentFlags().Int64Var(&lineLimit, "line-limit", LineLimitDefault, "Return logs with this amount of lines retrieved. Defaults to 1000 lines. Used with all runtimes as a default. --k8s-since-seconds and --docker-since will both override this setting.")
+	collectCmd.PersistentFlags().StringVarP(&prefixDir, "prefix-dir", "k", "/usr/local/kong", "The path to your prefix directory for determining VM log locations. Default: /usr/local/kong")
 	collectCmd.PersistentFlags().BoolVarP(&disableKDDCollection, "disable-kdd", "q", false, "Disable KDD config collection. Default: false.")
 	collectCmd.PersistentFlags().StringSliceVarP(&strToRedact, "redact-logs", "R", nil, "CSV list of terms to redact during log extraction.")
 }
@@ -398,11 +398,19 @@ func runDocker() ([]string, error) {
 			//return err
 		} else {
 
-			if os.Getenv("LOGS_SINCE") != "" {
-				logsSinceDocker = os.Getenv("LOGS_SINCE")
+			if os.Getenv("DOCKER_LOGS_SINCE") != "" {
+				logsSinceDocker = os.Getenv("DOCKER_LOGS_SINCE")
 			}
 
-			options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Since: logsSinceDocker, Details: true}
+			options := types.ContainerLogsOptions{}
+
+			if logsSinceDocker != "" {
+				options = types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Since: logsSinceDocker, Details: true}
+			} else {
+				strLineLimit := strconv.Itoa(int(lineLimit))
+				options = types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: strLineLimit, Details: true}
+			}
+
 			logs, err := cli.ContainerLogs(ctx, c.ID, options)
 
 			defer logs.Close()
@@ -441,7 +449,7 @@ func runDocker() ([]string, error) {
 							sanitizedBytes = bytes
 						}
 					}
-					sanitizedLogLine := string(sanitizedBytes)
+					sanitizedLogLine := string(sanitizedBytes) + "\n"
 
 					if len(strToRedact) > 0 {
 						sanitizedLogLine = analyseLogLineForRedaction(sanitizedLogLine + "\n")
@@ -777,8 +785,8 @@ func createAndWriteLogFile(initialLogName string, contents string) (string, erro
 func runVM() ([]string, error) {
 	log.Info("Running in VM mode.")
 
-	if vmLineLimit == vmLineLimitDefault {
-		log.Info("Using default line limit value of ", vmLineLimitDefault)
+	if lineLimit == LineLimitDefault {
+		log.Info("Using default line limit value of ", LineLimitDefault)
 	}
 
 	var filesToZip []string
@@ -899,7 +907,7 @@ func collectAndLimitLog(envars, configKey string) string {
 								singleLineBytes = append(singleLineBytes, lastReadByte)
 							}
 
-							if linesProcessed == vmLineLimit {
+							if linesProcessed == lineLimit {
 								done = true
 							}
 
@@ -1010,13 +1018,18 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 			if relevantImage {
 				log.Info("Working on container: ", container.Name)
 
-				if os.Getenv("LOGS_SINCE_SECONDS") != "" {
-					logsSinceSeconds, err = strconv.ParseInt(os.Getenv("LOGS_SINCE_SECONDS"), 10, 64)
+				if os.Getenv("K8S_LOGS_SINCE_SECONDS") != "" {
+					logsSinceSeconds, err = strconv.ParseInt(os.Getenv("K8S_LOGS_SINCE_SECONDS"), 10, 64)
 				}
 
 				//options := types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Since: logsSinceSeconds, Details: true}
+				podLogOpts := corev1.PodLogOptions{}
 
-				podLogOpts := corev1.PodLogOptions{Container: container.Name, SinceSeconds: &logsSinceSeconds}
+				if logsSinceSeconds > 0 {
+					podLogOpts = corev1.PodLogOptions{Container: container.Name, SinceSeconds: &logsSinceSeconds}
+				} else {
+					podLogOpts = corev1.PodLogOptions{Container: container.Name, TailLines: &lineLimit}
+				}
 
 				//podLogOpts.TailLines = &[]int64{int64(100)}[0]
 

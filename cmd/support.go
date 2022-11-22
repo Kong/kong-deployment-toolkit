@@ -1,16 +1,13 @@
 /*
 Copyright © 2022 John Harris
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
-
 The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
-
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -36,24 +33,19 @@ It is important to provide logs to us. A single line error log does not provide 
 enable debug log by setting log_level and provide the full logs to us. If you have any logging plugin enabled, please
 provide the related request logs to us as well.
 Here is our KB article about enabling debug log on different platforms.
-
 https://support.konghq.com/support/s/article/how-to-enable-debug-log
-
 Problem with OIDC and JWT signer
 On top of plugin configuration and debug log, we need a sample JWT token (For example, id_token,
 access_token from your IDP). This is to help us understand how your token is signed, what claims are on the token
 to debug further.
-
 Problem observed on browsers
 If you observe the issue on your browser, you may want to generate and provide a HAR file to us.
 To generate HAR file, please check this article. You can also analyse the HAR file with HAR Analyzer.
-
 Version Support Policy
 Please make sure the Kong version you are running is currently within the support window to avoid any surprises.
 Specifically, if you are at the end of full support (in sunset phase) Kong will not provide patches for software covered
 by this sunset period.
 For more detail, please check our support policy here.
-
 Do's and Don'ts
 Please do NOT use screenshot for logs and configurations. Please save your logs and configurations to different files and attach
 them to the case. We highly encourage you to provide reproduce steps to us. This will significantly reduce the time for debugging

@@ -21,6 +21,8 @@ The tool can collect the following information and saves it as a `.tar.gz` file:
 - License endpoint metrics
 - Workspace config deck dumps
 
+Note: Collection from K8s or Docker relies on the Kong logs being redirected to stdout / stderr for extraction.
+
 ## Caveats
 
 VM log collection can only be done on a VM by VM basis and the application needs to be run on the node itself. It requires access to the Kong prefix directory environment file to discover the VM log locations and then gathers them accordingly.

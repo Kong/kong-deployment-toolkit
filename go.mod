@@ -1,4 +1,4 @@
-module github.com/kong/kong-debug-tool
+module github.com/kong/kong-deployment-toolkit
 
 go 1.25.5
 

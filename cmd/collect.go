@@ -28,7 +28,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kong/kong-debug-tool/pkg/collector"
+	"github.com/kong/kong-deployment-toolkit/pkg/collector"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )

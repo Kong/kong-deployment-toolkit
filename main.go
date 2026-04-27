@@ -21,7 +21,7 @@ THE SOFTWARE.
 */
 package main
 
-import "github.com/kong/kong-debug-tool/cmd"
+import "github.com/kong/kong-deployment-toolkit/cmd"
 
 func main() {
 	cmd.Execute()

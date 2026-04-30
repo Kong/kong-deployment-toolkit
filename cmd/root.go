@@ -46,5 +46,5 @@ func Execute() {
 }
 
 func init() {
-	//rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "verbose logging")
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable verbose debug logging")
 }

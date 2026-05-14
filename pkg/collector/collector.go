@@ -42,9 +42,19 @@ package collector
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	log "github.com/sirupsen/logrus"
+)
+
+var (
+	detectRuntimeFn     = DetectRuntime
+	collectDockerFn     = CollectDocker
+	collectKubernetesFn = CollectKubernetes
+	collectVMFn         = CollectVM
+	collectKDDFn        = CollectKDD
+	createArchiveFn     = CreateArchive
 )
 
 // Collect performs the full data collection process based on the provided configuration.
@@ -65,7 +75,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 
 	if runtime == "" {
 		log.Info("No runtime detected, attempting to guess runtime...")
-		detectedRuntime, err := DetectRuntime(cfg.TargetImages, cfg.PrefixDir)
+		detectedRuntime, err := detectRuntimeFn(cfg.TargetImages, cfg.PrefixDir)
 		if err != nil {
 			log.WithError(err).Error("Failed to guess runtime")
 			return nil, err
@@ -77,7 +87,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 	switch runtime {
 	case RuntimeDocker:
 		log.Info("Using Docker runtime")
-		dockerFiles, err := CollectDocker(ctx, cfg)
+		dockerFiles, err := collectDockerFn(ctx, cfg)
 		if err != nil {
 			log.WithError(err).Error("Error with docker runtime collection")
 			warnings = append(warnings, err)
@@ -87,7 +97,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 
 	case RuntimeKubernetes:
 		log.Info("Using Kubernetes runtime")
-		k8sFiles, err := CollectKubernetes(ctx, cfg)
+		k8sFiles, err := collectKubernetesFn(ctx, cfg)
 		if err != nil {
 			log.WithError(err).Error("Error with Kubernetes runtime collection")
 			warnings = append(warnings, err)
@@ -97,7 +107,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 
 	case RuntimeVM:
 		log.Info("Using VM runtime")
-		vmFiles, err := CollectVM(ctx, cfg)
+		vmFiles, err := collectVMFn(ctx, cfg)
 		if err != nil {
 			log.WithError(err).Error("Error with VM runtime collection")
 			warnings = append(warnings, err)
@@ -106,7 +116,9 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 		}
 
 	default:
-		log.WithField("runtime", runtime).Error("Runtime not supported")
+		err := fmt.Errorf("runtime %q not supported", runtime)
+		log.WithError(err).WithField("runtime", runtime).Error("Runtime not supported")
+		return nil, err
 	}
 
 	// Handle KDD collection
@@ -117,7 +129,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 	if !cfg.DisableKDD {
 		log.Info("KDD collection is enabled")
 
-		kddFiles, err := CollectKDD(ctx, cfg)
+		kddFiles, err := collectKDDFn(ctx, cfg)
 		if err != nil {
 			log.WithError(err).Error("Error with KDD collection")
 			warnings = append(warnings, err)
@@ -129,7 +141,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 	// Create the archive
 	log.Info("Writing tar.gz output")
 
-	archivePath, err := CreateArchive(filesToZip, cfg.OutputDir)
+	archivePath, err := createArchiveFn(filesToZip, cfg.OutputDir)
 	if err != nil {
 		log.WithError(err).Error("Error writing tar.gz file")
 		return nil, err

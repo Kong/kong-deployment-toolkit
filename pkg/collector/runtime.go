@@ -38,6 +38,13 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+var (
+	tryDetectDockerFn     = tryDetectDocker
+	tryDetectKubernetesFn = tryDetectKubernetes
+	tryDetectVMFn         = tryDetectVM
+	osStatFn              = os.Stat
+)
+
 // DetectRuntime attempts to detect the Kong deployment runtime.
 // It checks for Docker, Kubernetes, and VM deployments in order.
 // Returns the detected runtime string or an error if none could be detected.
@@ -46,7 +53,7 @@ func DetectRuntime(kongImages []string, prefixDir string) (string, error) {
 	var errList []string
 
 	// Try Docker first
-	runtime, err := tryDetectDocker(kongImages)
+	runtime, err := tryDetectDockerFn(kongImages)
 	if err != nil {
 		errList = append(errList, err.Error())
 	} else if runtime != "" {
@@ -54,7 +61,7 @@ func DetectRuntime(kongImages []string, prefixDir string) (string, error) {
 	}
 
 	// Try Kubernetes
-	runtime, err = tryDetectKubernetes(kongImages)
+	runtime, err = tryDetectKubernetesFn(kongImages)
 	if err != nil {
 		errList = append(errList, err.Error())
 	} else if runtime != "" {
@@ -62,7 +69,7 @@ func DetectRuntime(kongImages []string, prefixDir string) (string, error) {
 	}
 
 	// Try VM
-	runtime, detectedPrefixDir, err := tryDetectVM(prefixDir)
+	runtime, detectedPrefixDir, err := tryDetectVMFn(prefixDir)
 	if err != nil {
 		errList = append(errList, err.Error())
 	} else if runtime != "" {
@@ -144,13 +151,13 @@ func tryDetectKubernetes(kongImages []string) (string, error) {
 // Returns the runtime, the detected prefix directory, and any error.
 func tryDetectVM(prefixDir string) (string, string, error) {
 	// Check default location first
-	if _, err := os.Stat("/usr/local/kong/.kong_env"); err == nil {
+	if _, err := osStatFn("/usr/local/kong/.kong_env"); err == nil {
 		log.Info("VM runtime detected")
 		return RuntimeVM, "/usr/local/kong", nil
 	}
 
 	// Try alternate prefix directory
-	if _, err := os.Stat("/KONG_PREFIX/.kong_env"); err == nil {
+	if _, err := osStatFn("/KONG_PREFIX/.kong_env"); err == nil {
 		log.Info("VM runtime detected with alternate prefix directory")
 		return RuntimeVM, "/KONG_PREFIX", nil
 	}
@@ -158,7 +165,7 @@ func tryDetectVM(prefixDir string) (string, string, error) {
 	// Try the provided prefix directory
 	if prefixDir != "" && prefixDir != "/usr/local/kong" {
 		envPath := prefixDir + "/.kong_env"
-		if _, err := os.Stat(envPath); err == nil {
+		if _, err := osStatFn(envPath); err == nil {
 			log.Info("VM runtime detected with custom prefix directory")
 			return RuntimeVM, prefixDir, nil
 		}

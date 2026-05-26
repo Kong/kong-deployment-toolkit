@@ -1,6 +1,6 @@
 module github.com/kong/kong-deployment-toolkit
 
-go 1.25.5
+go 1.26.0
 
 require (
 	github.com/docker/docker v27.4.0+incompatible

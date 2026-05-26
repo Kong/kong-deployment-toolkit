@@ -50,6 +50,7 @@ var (
 	disableKDDCollection       bool
 	strToRedact                []string
 	sanitizeConfigs            bool
+	namespace                  string
 )
 
 var collectCmd = &cobra.Command{
@@ -65,6 +66,7 @@ var collectCmd = &cobra.Command{
 			RBACHeaders:             deckHeaders,
 			TargetImages:            kongImages,
 			TargetPods:              targetPods,
+			Namespace:               namespace,
 			DisableKDD:              disableKDDCollection,
 			DumpWorkspaceConfigs:    createWorkspaceConfigDumps,
 			SanitizeConfigs:         sanitizeConfigs,
@@ -117,6 +119,7 @@ func init() {
 	collectCmd.PersistentFlags().StringVarP(&kongAddr, "kong-addr", "a", "http://localhost:8001", "The address to reach the admin-api of the Kong instance in question.")
 	collectCmd.PersistentFlags().BoolVarP(&createWorkspaceConfigDumps, "dump-workspace-configs", "d", false, "Deck dump workspace configs to yaml files. Default: false. NOTE: Will not work if --disable-kdd=true")
 	collectCmd.PersistentFlags().StringSliceVarP(&targetPods, "target-pods", "p", nil, "CSV list of pod names to target when extracting logs. Default is to scan all running pods for Kong images.")
+	collectCmd.PersistentFlags().StringVarP(&namespace, "namespace", "n", "", "Kubernetes namespace to collect from. Required when --runtime=kubernetes.")
 	collectCmd.PersistentFlags().StringVar(&logsSinceDocker, "docker-since", "", "Return logs newer than a relative duration like 5s, 2m, or 3h. Used with docker runtime only. Will override --line-limit if set.")
 	collectCmd.PersistentFlags().Int64Var(&logsSinceSeconds, "k8s-since-seconds", 0, "Return logs newer than the seconds past. Used with K8s runtime only. Will override --line-limit if set.")
 	collectCmd.PersistentFlags().Int64Var(&lineLimit, "line-limit", collector.LineLimitDefault, "Return logs with this amount of lines retrieved. Defaults to 1000 lines. Used with all runtimes as a default. --k8s-since-seconds and --docker-since will both override this setting.")
@@ -157,6 +160,9 @@ func applyEnvVarOverrides(cfg *collector.Config) {
 	}
 	if v := os.Getenv("TARGET_PODS"); v != "" {
 		cfg.TargetPods = strings.Split(v, ",")
+	}
+	if v := os.Getenv("K8S_NAMESPACE"); v != "" && cfg.Namespace == "" {
+		cfg.Namespace = v
 	}
 	if v := os.Getenv("K8S_LOGS_SINCE_SECONDS"); v != "" {
 		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {

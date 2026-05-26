@@ -1,0 +1,52 @@
+name: Build KDT binary
+
+on:
+  push:
+    branches:
+      - master 
+
+jobs:
+  build: 
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code 
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26
+
+      - name: Build KDT
+        run: | 
+          go mod tidy
+          CGO_ENABLED=0 go build -ldflags="-s -w -extldflags '-static'" -o kdt
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -extldflags '-static'" -o kdt-darwin-arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -extldflags '-static'" -o kdt-linux-arm64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -extldflags '-static'" -o kdt-win-amd64.exe
+
+      - name: Upload amd64 Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdt-linux-amd64
+          path: ./kdt
+
+      - name: Upload Linux arm64 Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdt-linux-arm64
+          path: ./kdt-linux-arm64
+
+      - name: Upload Mac Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdt-darwin-arm64
+          path: ./kdt-darwin-arm64
+
+      - name: Upload Windows Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdt-win-amd64.exe
+          path: ./kdt-win-amd64.exe

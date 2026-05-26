@@ -1,4 +1,4 @@
-name: Build and compress KDT binary
+name: Build KDT binary
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build: 
-    name: Build and Compress
+    name: Build
     runs-on: ubuntu-latest
 
     steps:
@@ -17,7 +17,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.22
+          go-version: 1.26
 
       - name: Build KDT
         run: | 
@@ -27,37 +27,25 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -extldflags '-static'" -o kdt-linux-arm64
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -extldflags '-static'" -o kdt-win-amd64.exe
 
-      - name: Install UPX
-        run: | 
-          sudo apt-get update
-          sudo apt-get install upx -y
-
-      - name: Compress Binary
-        run: | 
-          upx --best --lzma ./kdt
-          upx --best --lzma ./kdt-darwin-arm64 --force-macos
-          upx --best --lzma ./kdt-linux-arm64
-          upx --best --lzma ./kdt-win-amd64.exe
-
-      - name: Upload Compressed amd64 Binary
+      - name: Upload amd64 Binary
         uses: actions/upload-artifact@v4
         with:
           name: kdt-linux-amd64
           path: ./kdt
 
-      - name: Upload Compressed Linux arm64 Binary
+      - name: Upload Linux arm64 Binary
         uses: actions/upload-artifact@v4
         with:
           name: kdt-linux-arm64
           path: ./kdt-linux-arm64
 
-      - name: Upload Compressed Mac Binary
+      - name: Upload Mac Binary
         uses: actions/upload-artifact@v4
         with:
           name: kdt-darwin-arm64
           path: ./kdt-darwin-arm64
 
-      - name: Upload Compressed Windows Binary
+      - name: Upload Windows Binary
         uses: actions/upload-artifact@v4
         with:
           name: kdt-win-amd64.exe

@@ -198,9 +198,17 @@ func collectAndLimitLog(envars, configKey, prefixDir string, lineLimit int64, st
 				continue
 			}
 
+			if logPath == "off" || logPath == "/dev/stdout" || logPath == "/dev/stderr" {
+				log.WithFields(log.Fields{
+					"configKey": configKey,
+					"logPath":   logPath,
+				}).Info("Log path is not a readable file, skipping")
+				continue
+			}
+
 			var logLines []string
 
-			if logPath[:4] == "logs" {
+			if strings.HasPrefix(logPath, "logs") {
 				fullLogPath := prefixDir + "/" + logPath
 				log.WithFields(log.Fields{
 					"prefix":   prefixDir,

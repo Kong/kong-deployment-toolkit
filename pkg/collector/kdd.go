@@ -285,6 +285,11 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 
 	// Handle Konnect mode
 	log.Info("Running in Konnect mode")
+
+	if len(deckHeaders) == 0 {
+		return nil, fmt.Errorf("konnect mode requires --rbac-header or RBAC_HEADER with a Konnect token")
+	}
+
 	httpClient := utils.HTTPClient()
 
 	controlPlaneName := cfg.KonnectControlPlaneName
@@ -295,10 +300,10 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 	}
 
 	// Setup the Konnect client
-	log.WithField("deckHeaders", deckHeaders).Debug("Using deck headers")
+	log.Debug("Using deck headers")
 	config := utils.KonnectConfig{
 		ControlPlaneName: controlPlaneName,
-		Token:            deckHeaders[0],
+		Token:            normalizeKonnectToken(deckHeaders[0]),
 		Address:          kongAddr,
 		TLSConfig:        konnectTLSConfig,
 	}
@@ -427,6 +432,23 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 
 	filesToZip = append(filesToZip, "KDD.json")
 	return filesToZip, nil
+}
+
+// normalizeKonnectToken extracts a bare bearer token from a --rbac-header value.
+// Accepts either a bare token, or a "Header-Name:value" pair as documented for
+// --rbac-header (e.g. "Authorization:Bearer <token>"), optionally with a "Bearer "
+// prefix on the value.
+func normalizeKonnectToken(header string) string {
+	value := header
+	if idx := strings.Index(header, ":"); idx != -1 {
+		value = header[idx+1:]
+	}
+
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "Bearer ")
+	value = strings.TrimPrefix(value, "bearer ")
+
+	return strings.TrimSpace(value)
 }
 
 // buildTLSConfig builds the TLS configuration used to contact the Kong Admin API,

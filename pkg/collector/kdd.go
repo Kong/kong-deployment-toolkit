@@ -54,14 +54,17 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 	deckHeaders := cfg.RBACHeaders
 
 	if !cfg.KonnectMode {
+		tlsConfig, err := buildTLSConfig(cfg)
+		if err != nil {
+			return filesToZip, err
+		}
+
 		// Get the Kong client
 		client, err := utils.GetKongClient(utils.KongClientConfig{
-			Address: kongAddr,
-			TLSConfig: utils.TLSConfig{
-				SkipVerify: true,
-			},
-			Debug:   false,
-			Headers: deckHeaders,
+			Address:   kongAddr,
+			TLSConfig: tlsConfig,
+			Debug:     false,
+			Headers:   deckHeaders,
 		})
 
 		if err != nil {
@@ -171,12 +174,10 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 
 				// Create a workspace-specific client to avoid race conditions
 				wsClient, err := utils.GetKongClient(utils.KongClientConfig{
-					Address: kongAddr,
-					TLSConfig: utils.TLSConfig{
-						SkipVerify: true,
-					},
-					Debug:   false,
-					Headers: deckHeaders,
+					Address:   kongAddr,
+					TLSConfig: tlsConfig,
+					Debug:     false,
+					Headers:   deckHeaders,
 				})
 				if err != nil {
 					log.WithFields(log.Fields{
@@ -288,12 +289,18 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 
 	controlPlaneName := cfg.KonnectControlPlaneName
 
+	konnectTLSConfig, err := buildTLSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	// Setup the Konnect client
 	log.WithField("deckHeaders", deckHeaders).Debug("Using deck headers")
 	config := utils.KonnectConfig{
 		ControlPlaneName: controlPlaneName,
 		Token:            deckHeaders[0],
 		Address:          kongAddr,
+		TLSConfig:        konnectTLSConfig,
 	}
 
 	// Tack the token on as an auth header
@@ -420,6 +427,22 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 
 	filesToZip = append(filesToZip, "KDD.json")
 	return filesToZip, nil
+}
+
+// buildTLSConfig builds the TLS configuration used to contact the Kong Admin API,
+// honoring cfg.TLSSkipVerify and loading cfg.CACertPath if set.
+func buildTLSConfig(cfg *Config) (utils.TLSConfig, error) {
+	tlsConfig := utils.TLSConfig{SkipVerify: cfg.TLSSkipVerify}
+
+	if cfg.CACertPath != "" {
+		caCert, err := os.ReadFile(cfg.CACertPath)
+		if err != nil {
+			return tlsConfig, fmt.Errorf("failed to read CA cert file %q: %w", cfg.CACertPath, err)
+		}
+		tlsConfig.CACert = string(caCert)
+	}
+
+	return tlsConfig, nil
 }
 
 // formatJSON formats JSON data with indentation.

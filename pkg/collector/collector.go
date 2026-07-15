@@ -71,6 +71,19 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 		return nil, fmt.Errorf("konnect mode requires --konnect-control-plane-name (or KonnectControlPlaneName) to be set")
 	}
 
+	// All intermediate/scratch files are written into a private per-run temp
+	// directory rather than the process's current working directory, so a
+	// collection run can never collide with or delete a user's own files.
+	workDir, err := os.MkdirTemp("", "kdt-collect-*")
+	if err != nil {
+		return nil, fmt.Errorf("creating temporary working directory: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(workDir); err != nil {
+			log.WithError(err).Warn("Failed to clean up temporary working directory")
+		}
+	}()
+
 	var filesToZip []string
 	var warnings []error
 
@@ -91,7 +104,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 	switch runtime {
 	case RuntimeDocker:
 		log.Info("Using Docker runtime")
-		dockerFiles, err := collectDockerFn(ctx, cfg)
+		dockerFiles, err := collectDockerFn(ctx, cfg, workDir)
 		if err != nil {
 			log.WithError(err).Error("Error with docker runtime collection")
 			warnings = append(warnings, err)
@@ -101,7 +114,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 
 	case RuntimeKubernetes:
 		log.Info("Using Kubernetes runtime")
-		k8sFiles, err := collectKubernetesFn(ctx, cfg)
+		k8sFiles, err := collectKubernetesFn(ctx, cfg, workDir)
 		if err != nil {
 			log.WithError(err).Error("Error with Kubernetes runtime collection")
 			warnings = append(warnings, err)
@@ -111,7 +124,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 
 	case RuntimeVM:
 		log.Info("Using VM runtime")
-		vmFiles, err := collectVMFn(ctx, cfg)
+		vmFiles, err := collectVMFn(ctx, cfg, workDir)
 		if err != nil {
 			log.WithError(err).Error("Error with VM runtime collection")
 			warnings = append(warnings, err)
@@ -133,7 +146,7 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 	if !cfg.DisableKDD {
 		log.Info("KDD collection is enabled")
 
-		kddFiles, err := collectKDDFn(ctx, cfg)
+		kddFiles, err := collectKDDFn(ctx, cfg, workDir)
 		if err != nil {
 			log.WithError(err).Error("Error with KDD collection")
 			warnings = append(warnings, err)
@@ -180,34 +193,65 @@ func initLogging(cfg *Config) {
 	}
 }
 
+// newWorkDir creates a private per-run temporary directory for the CollectXOnly
+// convenience functions. Unlike Collect, these do not archive or clean up after
+// themselves - the caller receives the file paths and owns their lifecycle.
+func newWorkDir() (string, error) {
+	return os.MkdirTemp("", "kdt-collect-*")
+}
+
 // CollectDocker is a convenience function for collecting Docker data only.
 // It does not create an archive - use Collect for full functionality.
+// Returned file paths live under a temporary directory the caller owns and
+// is responsible for removing.
 func CollectDockerOnly(ctx context.Context, cfg *Config) ([]string, error) {
 	cfg = cfg.WithDefaults()
 	initLogging(cfg)
-	return CollectDocker(ctx, cfg)
+	workDir, err := newWorkDir()
+	if err != nil {
+		return nil, fmt.Errorf("creating temporary working directory: %w", err)
+	}
+	return CollectDocker(ctx, cfg, workDir)
 }
 
 // CollectKubernetesOnly is a convenience function for collecting Kubernetes data only.
 // It does not create an archive - use Collect for full functionality.
+// Returned file paths live under a temporary directory the caller owns and
+// is responsible for removing.
 func CollectKubernetesOnly(ctx context.Context, cfg *Config) ([]string, error) {
 	cfg = cfg.WithDefaults()
 	initLogging(cfg)
-	return CollectKubernetes(ctx, cfg)
+	workDir, err := newWorkDir()
+	if err != nil {
+		return nil, fmt.Errorf("creating temporary working directory: %w", err)
+	}
+	return CollectKubernetes(ctx, cfg, workDir)
 }
 
 // CollectVMOnly is a convenience function for collecting VM data only.
 // It does not create an archive - use Collect for full functionality.
+// Returned file paths live under a temporary directory the caller owns and
+// is responsible for removing.
 func CollectVMOnly(ctx context.Context, cfg *Config) ([]string, error) {
 	cfg = cfg.WithDefaults()
 	initLogging(cfg)
-	return CollectVM(ctx, cfg)
+	workDir, err := newWorkDir()
+	if err != nil {
+		return nil, fmt.Errorf("creating temporary working directory: %w", err)
+	}
+	return CollectVM(ctx, cfg, workDir)
 }
 
 // CollectKDDOnly is a convenience function for collecting KDD data only.
 // It does not create an archive - use Collect for full functionality.
+// Returned file paths live under a temporary directory the caller owns and
+// is responsible for removing.
 func CollectKDDOnly(ctx context.Context, cfg *Config) ([]string, error) {
 	cfg = cfg.WithDefaults()
 	initLogging(cfg)
-	return CollectKDD(ctx, cfg)
+	workDir, err := newWorkDir()
+	if err != nil {
+		return nil, fmt.Errorf("creating temporary working directory: %w", err)
+	}
+	return CollectKDD(ctx, cfg, workDir)
 }

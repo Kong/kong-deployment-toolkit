@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +46,8 @@ import (
 )
 
 // CollectKubernetes performs log and configuration collection from Kubernetes pods.
-func CollectKubernetes(ctx context.Context, cfg *Config) ([]string, error) {
+// Intermediate files are written under workDir rather than the current working directory.
+func CollectKubernetes(ctx context.Context, cfg *Config, workDir string) ([]string, error) {
 	filesToCopy := []string{
 		"/etc/resolv.conf",
 		"/etc/hosts",
@@ -130,7 +132,7 @@ func CollectKubernetes(ctx context.Context, cfg *Config) ([]string, error) {
 	if len(kongK8sPods) > 0 {
 		log.WithField("podCount", len(kongK8sPods)).Info("Processing Kubernetes pods")
 
-		logFilenames, err := writePodDetails(ctx, kubeClient, kongK8sPods, cfg)
+		logFilenames, err := writePodDetails(ctx, kubeClient, kongK8sPods, cfg, workDir)
 		if err != nil {
 			log.WithError(err).Error("Error writing pod details")
 		} else {
@@ -178,7 +180,7 @@ func CollectKubernetes(ctx context.Context, cfg *Config) ([]string, error) {
 							Name: file,
 						}
 
-						filename, err := RunCommandInPod(ctx, kubeClient, clientConfig, p.Namespace, p.Name, container.Name, namedCmd)
+						filename, err := RunCommandInPod(ctx, kubeClient, clientConfig, p.Namespace, p.Name, container.Name, namedCmd, workDir)
 						if err != nil {
 							log.WithFields(log.Fields{
 								"pod":       p.Name,
@@ -197,7 +199,7 @@ func CollectKubernetes(ctx context.Context, cfg *Config) ([]string, error) {
 					}
 
 					for _, namedCmd := range commandsToRun {
-						filename, err := RunCommandInPod(ctx, kubeClient, clientConfig, p.Namespace, p.Name, container.Name, namedCmd)
+						filename, err := RunCommandInPod(ctx, kubeClient, clientConfig, p.Namespace, p.Name, container.Name, namedCmd, workDir)
 						if err != nil {
 							log.WithFields(log.Fields{
 								"pod":       p.Name,
@@ -234,8 +236,8 @@ func CollectKubernetes(ctx context.Context, cfg *Config) ([]string, error) {
 	return filesToZip, nil
 }
 
-// writePodDetails writes pod logs and definitions to files.
-func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podList []corev1.Pod, cfg *Config) ([]string, error) {
+// writePodDetails writes pod logs and definitions to files under workDir.
+func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podList []corev1.Pod, cfg *Config, workDir string) ([]string, error) {
 	// Pre-allocate with estimated capacity (2 files per pod: logs + yaml)
 	logFilenames := make([]string, 0, len(podList)*2)
 
@@ -293,7 +295,7 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 			}
 
 			sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(container.Image, ":", "/"), "/", "-")
-			logsFilename := fmt.Sprintf("%s-%s.log", pod.Name, sanitizedImageName)
+			logsFilename := filepath.Join(workDir, fmt.Sprintf("%s-%s.log", pod.Name, sanitizedImageName))
 
 			logFile, err := os.Create(logsFilename)
 			if err != nil {
@@ -329,7 +331,7 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 			logFilenames = append(logFilenames, logsFilename)
 		}
 
-		podDefFileName := fmt.Sprintf("%s.yaml", p.Name)
+		podDefFileName := filepath.Join(workDir, fmt.Sprintf("%s.yaml", p.Name))
 		podDefFile, err := os.Create(podDefFileName)
 		if err != nil {
 			log.WithFields(log.Fields{
@@ -378,7 +380,8 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 	return logFilenames, nil
 }
 
-// RunCommandInPod executes a command inside a Kubernetes pod container.
+// RunCommandInPod executes a command inside a Kubernetes pod container and
+// writes its output to a file under workDir.
 func RunCommandInPod(
 	ctx context.Context,
 	clientset kubernetes.Interface,
@@ -386,7 +389,8 @@ func RunCommandInPod(
 	namespace string,
 	pod string,
 	container string,
-	namedCmd NamedCommand) (string, error) {
+	namedCmd NamedCommand,
+	workDir string) (string, error) {
 
 	log.WithFields(log.Fields{
 		"namespace": namespace,
@@ -439,7 +443,7 @@ func RunCommandInPod(
 	}
 
 	sanitizedName := strings.ReplaceAll(namedCmd.Name, "/", "-")
-	dstFile := fmt.Sprintf("%s-%s.log", container, sanitizedName)
+	dstFile := filepath.Join(workDir, fmt.Sprintf("%s-%s.log", container, sanitizedName))
 
 	err = WriteOutputToFile(dstFile, stdout.Bytes())
 	if err != nil {
@@ -453,10 +457,10 @@ func RunCommandInPod(
 	return dstFile, nil
 }
 
-// createAndWriteLogFile creates a log file with hostname prefix and timestamp.
-func createAndWriteLogFile(initialLogName string, contents string) (string, error) {
+// createAndWriteLogFile creates a log file with hostname prefix and timestamp under workDir.
+func createAndWriteLogFile(initialLogName string, contents string, workDir string) (string, error) {
 	hostname, _ := os.Hostname()
-	logName := fmt.Sprintf(hostname+"_"+initialLogName+"-%s.log", time.Now().Format("2006-01-02-15-04-05"))
+	logName := filepath.Join(workDir, fmt.Sprintf(hostname+"_"+initialLogName+"-%s.log", time.Now().Format("2006-01-02-15-04-05")))
 
 	logFile, err := os.Create(logName)
 	if err != nil {

@@ -51,6 +51,8 @@ var (
 	strToRedact                []string
 	sanitizeConfigs            bool
 	namespace                  string
+	tlsSkipVerify              bool
+	caCertPath                 string
 )
 
 var collectCmd = &cobra.Command{
@@ -78,6 +80,8 @@ var collectCmd = &cobra.Command{
 			K8sLogsSinceSeconds:     logsSinceSeconds,
 			PrefixDir:               prefixDir,
 			Debug:                   debug,
+			TLSSkipVerify:           tlsSkipVerify,
+			CACertPath:              caCertPath,
 		}
 
 		// Apply environment variable overrides (backward compatibility).
@@ -127,6 +131,8 @@ func init() {
 	collectCmd.PersistentFlags().BoolVarP(&disableKDDCollection, "disable-kdd", "q", false, "Disable KDD config collection. Default: false.")
 	collectCmd.PersistentFlags().StringSliceVarP(&strToRedact, "redact-logs", "R", nil, "CSV list of terms to redact during log extraction.")
 	collectCmd.PersistentFlags().BoolVarP(&sanitizeConfigs, "sanitize", "s", true, "Sanitize sensitive data in config dumps. Default: true.")
+	collectCmd.PersistentFlags().BoolVar(&tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification when connecting to the Kong Admin API. WARNING: insecure, allows on-path interception of credentials. Default: false.")
+	collectCmd.PersistentFlags().StringVar(&caCertPath, "ca-cert", "", "Path to a PEM-encoded CA certificate bundle to verify the Kong Admin API's TLS certificate.")
 }
 
 // applyEnvVarOverrides applies environment variable overrides to the collector config.

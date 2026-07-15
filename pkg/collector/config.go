@@ -76,6 +76,15 @@ type Config struct {
 	// Required when KonnectMode is true.
 	KonnectControlPlaneName string
 
+	// TLSSkipVerify disables TLS certificate verification when connecting to the Kong Admin API.
+	// Default: false. WARNING: disabling verification allows an on-path attacker to intercept
+	// RBAC/Konnect credentials sent to the Admin API.
+	TLSSkipVerify bool
+
+	// CACertPath is an optional path to a PEM-encoded CA certificate bundle used to verify
+	// the Kong Admin API's TLS certificate, for self-signed or private-CA deployments.
+	CACertPath string
+
 	// RedactTerms is a list of terms to redact from collected logs.
 	// Case-insensitive matching is used.
 	RedactTerms []string

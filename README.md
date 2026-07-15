@@ -162,6 +162,8 @@ kdt collect \
 | `--docker-since` | | _none_ | Collect Docker logs newer than this relative duration (e.g. `5s`, `2m`, `3h`). Docker mode only. |
 | `--k8s-since-seconds` | | `0` | Collect Kubernetes logs newer than this many seconds. Kubernetes mode only. |
 | `--prefix-dir` | `-k` | `/usr/local/kong` | Kong prefix directory used to locate `.kong_env` and log paths. VM mode only. |
+| `--tls-skip-verify` | | `false` | Skip TLS certificate verification when connecting to the Kong Admin API. **Insecure** — allows an on-path attacker to intercept RBAC/Konnect credentials. Only use against trusted networks/hosts. |
+| `--ca-cert` | | _none_ | Path to a PEM-encoded CA certificate bundle used to verify the Kong Admin API's TLS certificate, for self-signed or private-CA deployments. |
 
 ### Environment variable overrides
 
@@ -213,7 +215,6 @@ The resulting `<timestamp>-support.tar.gz` is written to the mounted working dir
 
 ## Known issues (pre-release)
 
-- **TLS verification is hard-disabled** for Admin API calls (`InsecureSkipVerify: true`). There is no flag to re-enable it yet.
 - **`--sanitize` coverage is partial.** Specifically, the following are written to the archive verbatim:
   - `.kong_env` (VM mode)
   - Pod env vars in pod YAML

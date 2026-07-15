@@ -67,6 +67,10 @@ func Collect(ctx context.Context, cfg *Config) (*Result, error) {
 	// Initialize logging
 	initLogging(cfg)
 
+	if cfg.KonnectMode && cfg.KonnectControlPlaneName == "" {
+		return nil, fmt.Errorf("konnect mode requires --konnect-control-plane-name (or KonnectControlPlaneName) to be set")
+	}
+
 	var filesToZip []string
 	var warnings []error
 

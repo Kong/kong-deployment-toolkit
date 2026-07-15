@@ -27,7 +27,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -37,6 +36,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -173,11 +173,11 @@ func CollectDocker(ctx context.Context, cfg *Config) ([]string, error) {
 		options := container.LogsOptions{}
 
 		if logsSinceDocker != "" {
-			options = container.LogsOptions{ShowStdout: true, ShowStderr: true, Since: logsSinceDocker, Details: true}
+			options = container.LogsOptions{ShowStdout: true, ShowStderr: true, Since: logsSinceDocker, Details: false}
 			log.WithField("since", logsSinceDocker).Debug("Using time-based log retrieval")
 		} else {
 			strLineLimit := strconv.Itoa(int(cfg.LineLimit))
-			options = container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: strLineLimit, Details: true}
+			options = container.LogsOptions{ShowStdout: true, ShowStderr: true, Tail: strLineLimit, Details: false}
 			log.WithField("lineLimit", cfg.LineLimit).Debug("Using line-based log retrieval")
 		}
 
@@ -196,43 +196,23 @@ func CollectDocker(ctx context.Context, cfg *Config) ([]string, error) {
 			"filename":  logsFilename,
 		}).Info("Writing docker logs data")
 
-		buf := bufio.NewScanner(logs)
-		for buf.Scan() {
-			logBytes := buf.Bytes()
-			var sanitizedBytes []byte
+		if len(cfg.RedactTerms) > 0 {
+			var demuxed bytes.Buffer
+			if _, err := stdcopy.StdCopy(&demuxed, &demuxed, logs); err != nil {
+				log.WithError(err).Error("Unable to demultiplex container logs")
+			}
 
-			if len(logBytes) > 7 {
-				B1 := logBytes[0]
-				B2 := logBytes[1]
-				B3 := logBytes[2]
-				B4 := logBytes[3]
-				B5 := logBytes[4]
-				B6 := logBytes[5]
-				B7 := logBytes[6]
-
-				zeroByte := byte(0)
-
-				//Remove header bytes from the docker cli log scans if they match specific patterns.
-				if B1 == byte(50) && B2 == byte(48) && B3 == byte(50) && B4 == byte(50) && B5 == byte(47) && B6 == byte(48) && B7 == byte(54) {
-					sanitizedBytes = logBytes[8:]
-				} else if (B1 == byte(2) || B1 == byte(1)) && B2 == zeroByte && B3 == zeroByte && B4 == zeroByte && B5 == zeroByte && B6 == zeroByte && (B7 == zeroByte || B7 == byte(1)) {
-					sanitizedBytes = logBytes[8:]
-				} else {
-					sanitizedBytes = logBytes
+			scanner := bufio.NewScanner(&demuxed)
+			scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+			for scanner.Scan() {
+				redactedLine := AnalyseLogLineForRedaction(scanner.Text()+"\n", cfg.RedactTerms)
+				if _, err := io.WriteString(logFile, redactedLine); err != nil {
+					log.WithError(err).Error("Unable to write container logs")
+					break
 				}
 			}
-
-			sanitizedLogLine := string(sanitizedBytes) + "\n"
-
-			if len(cfg.RedactTerms) > 0 {
-				sanitizedLogLine = AnalyseLogLineForRedaction(sanitizedLogLine, cfg.RedactTerms)
-			}
-
-			_, err = io.Copy(logFile, strings.NewReader(sanitizedLogLine))
-			if err != nil {
-				log.WithError(err).Error("Unable to write container logs")
-				break
-			}
+		} else if _, err := stdcopy.StdCopy(logFile, logFile, logs); err != nil {
+			log.WithError(err).Error("Unable to demultiplex container logs")
 		}
 
 		logs.Close()
@@ -325,32 +305,15 @@ func RunCommandsInContainer(ctx context.Context, cli *client.Client, containerID
 	return filesToWrite, nil
 }
 
-// decodeDockerMultiplexedStream decodes the Docker multiplexed stream format.
+// decodeDockerMultiplexedStream decodes the Docker multiplexed stream format,
+// combining stdout and stderr into a single buffer in stream order.
 func decodeDockerMultiplexedStream(reader io.Reader) ([]byte, error) {
-	var output []byte
-	header := make([]byte, 8)
-
-	for {
-		_, err := reader.Read(header)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, err
-		}
-
-		size := binary.BigEndian.Uint32(header[4:])
-		payload := make([]byte, size)
-		_, err = io.ReadFull(reader, payload)
-
-		if err != nil {
-			return nil, err
-		}
-
-		output = append(output, payload...)
+	var output bytes.Buffer
+	if _, err := stdcopy.StdCopy(&output, &output, reader); err != nil {
+		return nil, err
 	}
 
-	return output, nil
+	return output.Bytes(), nil
 }
 
 // CopyFilesFromContainers copies files from a Docker container to the local filesystem.

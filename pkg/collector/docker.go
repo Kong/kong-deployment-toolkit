@@ -366,6 +366,14 @@ func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerI
 				continue
 			}
 
+			// Reject path traversal or absolute-path entries outright (zip-slip):
+			// this tar stream comes from the Docker daemon/container, which must
+			// not be trusted to name a safe destination path.
+			if strings.Contains(header.Name, "..") || filepath.IsAbs(header.Name) {
+				log.WithField("filename", header.Name).Warn("Skipping tar entry with unsafe path")
+				continue
+			}
+
 			// Warn if file is empty
 			if header.Size == 0 {
 				log.WithFields(log.Fields{
@@ -374,8 +382,7 @@ func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerI
 				}).Warn("File is empty in container")
 			}
 
-			// Use the tar entry's base name only - it originates from the Docker
-			// daemon/container and must not be trusted to stay within workDir otherwise.
+			// Use the tar entry's base name only, confined to workDir.
 			outFilename := filepath.Join(workDir, filepath.Base(header.Name))
 			outFile, err := os.Create(outFilename)
 			if err != nil {

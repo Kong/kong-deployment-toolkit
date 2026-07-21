@@ -31,7 +31,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -96,11 +95,6 @@ func CreateArchive(filesToWrite []string, outputDir string) (string, error) {
 
 	log.WithField("filename", output.Name()).Info("Diagnostics have been written to archive")
 
-	err = CleanupFiles(filesToWrite)
-	if err != nil {
-		log.WithError(err).Error("Error cleaning up files")
-	}
-
 	return outputName, nil
 }
 
@@ -135,8 +129,9 @@ func addToArchive(tw *tar.Writer, filename string) error {
 		return err
 	}
 
-	// Use full path as name (FileInfoHeader only takes the basename)
-	header.Name = filename
+	// Store only the basename in the archive - source files live under a
+	// temporary workDir whose path must not leak into the tar entry names.
+	header.Name = filepath.Base(filename)
 
 	// Write file header to the tar archive
 	err = tw.WriteHeader(header)
@@ -148,51 +143,6 @@ func addToArchive(tw *tar.Writer, filename string) error {
 	_, err = io.Copy(tw, file)
 	if err != nil {
 		return err
-	}
-
-	return nil
-}
-
-// CleanupFiles removes the specified files from the filesystem.
-func CleanupFiles(filesToCleanup []string) error {
-	var failed bool
-
-	for _, file := range filesToCleanup {
-		log.WithField("file", file).Debug("Cleaning up file")
-
-		// Check if file exists before attempting removal
-		fileInfo, err := os.Stat(file)
-		if err != nil {
-			if os.IsNotExist(err) {
-				log.WithField("file", file).Debug("File already removed or does not exist, skipping")
-				continue
-			}
-			log.WithFields(log.Fields{
-				"file":  file,
-				"error": err,
-			}).Warn("Error checking file status")
-			continue
-		}
-
-		// Skip if it's a directory
-		if fileInfo.IsDir() {
-			log.WithField("file", file).Debug("Skipping directory, not a file")
-			continue
-		}
-
-		// Now remove the file
-		err = os.Remove(file)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"file":  file,
-				"error": err,
-			}).Error("Error removing file")
-			failed = true
-		}
-	}
-
-	if failed {
-		return errors.New("Some files could not be removed and may require manual deletion")
 	}
 
 	return nil

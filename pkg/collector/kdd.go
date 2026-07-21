@@ -30,6 +30,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -45,7 +46,8 @@ import (
 )
 
 // CollectKDD performs Kong configuration data collection.
-func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
+// Intermediate files are written under workDir rather than the current working directory.
+func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, error) {
 	var summaryInfo SummaryInfo
 	var finalResponse = make(map[string]interface{})
 	var filesToZip []string
@@ -241,9 +243,10 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 						return
 					}
 
+					dumpFilename := filepath.Join(workDir, workspace.Name+"-kong-dump.yaml")
 					err = sanitizeKongState(ctx, wsClient, ks, file.WriteConfig{
 						KongVersion: summaryInfo.KongVersion,
-						Filename:    workspace.Name + "-kong-dump.yaml",
+						Filename:    dumpFilename,
 						FileFormat:  file.YAML,
 					}, false, cfg.SanitizeConfigs)
 					if err != nil {
@@ -254,7 +257,7 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 					} else {
 						log.WithField("workspace", workspace.Name).Info("Successfully dumped workspace")
 						mu.Lock()
-						filesToZip = append(filesToZip, workspace.Name+"-kong-dump.yaml")
+						filesToZip = append(filesToZip, dumpFilename)
 						mu.Unlock()
 					}
 				}
@@ -273,13 +276,14 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 			return filesToZip, err
 		}
 
-		err = os.WriteFile("KDD.json", jsonBytes, 0644)
+		kddJSONPath := filepath.Join(workDir, "KDD.json")
+		err = os.WriteFile(kddJSONPath, jsonBytes, 0644)
 		if err != nil {
 			log.WithError(err).Fatal("Error writing KDD.json")
 			return filesToZip, err
 		}
 
-		filesToZip = append(filesToZip, "KDD.json")
+		filesToZip = append(filesToZip, kddJSONPath)
 		return filesToZip, nil
 	}
 
@@ -395,7 +399,7 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 			return nil, fmt.Errorf("building state: %w", err)
 		}
 
-		filename := "konnect-" + controlPlaneName + ".yaml"
+		filename := filepath.Join(workDir, "konnect-"+controlPlaneName+".yaml")
 		err = sanitizeKongState(ctx, kongClient, ks, file.WriteConfig{
 			SelectTags:       dumpConfig.SelectorTags,
 			Filename:         filename,
@@ -424,13 +428,14 @@ func CollectKDD(ctx context.Context, cfg *Config) ([]string, error) {
 		return nil, err
 	}
 
-	err = os.WriteFile("KDD.json", jsonBytes, 0644)
+	kddJSONPath := filepath.Join(workDir, "KDD.json")
+	err = os.WriteFile(kddJSONPath, jsonBytes, 0644)
 	if err != nil {
 		log.WithError(err).Fatal("Error writing KDD.json")
 		return filesToZip, err
 	}
 
-	filesToZip = append(filesToZip, "KDD.json")
+	filesToZip = append(filesToZip, kddJSONPath)
 	return filesToZip, nil
 }
 

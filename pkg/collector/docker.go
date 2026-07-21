@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -41,7 +42,8 @@ import (
 )
 
 // CollectDocker performs log and configuration collection from Docker containers.
-func CollectDocker(ctx context.Context, cfg *Config) ([]string, error) {
+// Intermediate files are written under workDir rather than the current working directory.
+func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, error) {
 	filesToCopy := []string{
 		"/etc/resolv.conf",
 		"/etc/hosts",
@@ -91,7 +93,7 @@ func CollectDocker(ctx context.Context, cfg *Config) ([]string, error) {
 	for _, c := range kongContainers {
 		log.WithField("containerID", c.ID).Info("Inspecting container")
 
-		copiedFiles, err := CopyFilesFromContainers(ctx, cli, c.ID, filesToCopy)
+		copiedFiles, err := CopyFilesFromContainers(ctx, cli, c.ID, filesToCopy, workDir)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"containerID": c.ID,
@@ -99,7 +101,7 @@ func CollectDocker(ctx context.Context, cfg *Config) ([]string, error) {
 			}).Error("Error copying files from container")
 		}
 
-		executedFiles, err := RunCommandsInContainer(ctx, cli, c.ID, commandsToRun)
+		executedFiles, err := RunCommandsInContainer(ctx, cli, c.ID, commandsToRun, workDir)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"containerID": c.ID,
@@ -128,7 +130,7 @@ func CollectDocker(ctx context.Context, cfg *Config) ([]string, error) {
 
 		sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(c.Image, ":", "/"), "/", "-")
 		sanitizedContainerName := strings.ReplaceAll(c.Names[0], "/", "")
-		inspectFilename := fmt.Sprintf("%s-%s.json", sanitizedContainerName, sanitizedImageName)
+		inspectFilename := filepath.Join(workDir, fmt.Sprintf("%s-%s.json", sanitizedContainerName, sanitizedImageName))
 		inspectFile, err := os.Create(inspectFilename)
 		if err != nil {
 			log.WithFields(log.Fields{
@@ -158,7 +160,7 @@ func CollectDocker(ctx context.Context, cfg *Config) ([]string, error) {
 
 		filesToZip = append(filesToZip, inspectFilename)
 
-		logsFilename := fmt.Sprintf("%s-%s.log", sanitizedContainerName, sanitizedImageName)
+		logsFilename := filepath.Join(workDir, fmt.Sprintf("%s-%s.log", sanitizedContainerName, sanitizedImageName))
 		logFile, err := os.Create(logsFilename)
 		if err != nil {
 			log.WithFields(log.Fields{
@@ -241,8 +243,8 @@ func AnalyseLogLineForRedaction(line string, strToRedact []string) string {
 	return returnLine
 }
 
-// RunCommandsInContainer executes commands inside a Docker container and saves output to files.
-func RunCommandsInContainer(ctx context.Context, cli *client.Client, containerID string, commands []NamedCommand) ([]string, error) {
+// RunCommandsInContainer executes commands inside a Docker container and saves output to files under workDir.
+func RunCommandsInContainer(ctx context.Context, cli *client.Client, containerID string, commands []NamedCommand, workDir string) ([]string, error) {
 	// Pre-allocate with the number of commands
 	filesToWrite := make([]string, 0, len(commands))
 
@@ -290,16 +292,17 @@ func RunCommandsInContainer(ctx context.Context, cli *client.Client, containerID
 
 		resp.Close()
 
-		err = WriteOutputToFile(nc.Name, output)
+		outputFilename := filepath.Join(workDir, nc.Name)
+		err = WriteOutputToFile(outputFilename, output)
 		if err != nil {
 			log.WithFields(log.Fields{
-				"filename": nc.Name,
+				"filename": outputFilename,
 				"error":    err,
 			}).Error("Error writing output to file")
 			continue
 		}
 
-		filesToWrite = append(filesToWrite, nc.Name)
+		filesToWrite = append(filesToWrite, outputFilename)
 	}
 
 	return filesToWrite, nil
@@ -316,8 +319,8 @@ func decodeDockerMultiplexedStream(reader io.Reader) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-// CopyFilesFromContainers copies files from a Docker container to the local filesystem.
-func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerID string, files []string) ([]string, error) {
+// CopyFilesFromContainers copies files from a Docker container into workDir on the local filesystem.
+func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerID string, files []string, workDir string) ([]string, error) {
 	log.WithFields(log.Fields{
 		"containerID": containerID,
 		"fileCount":   len(files),
@@ -363,6 +366,14 @@ func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerI
 				continue
 			}
 
+			// Reject path traversal or absolute-path entries outright (zip-slip):
+			// this tar stream comes from the Docker daemon/container, which must
+			// not be trusted to name a safe destination path.
+			if strings.Contains(header.Name, "..") || filepath.IsAbs(header.Name) {
+				log.WithField("filename", header.Name).Warn("Skipping tar entry with unsafe path")
+				continue
+			}
+
 			// Warn if file is empty
 			if header.Size == 0 {
 				log.WithFields(log.Fields{
@@ -371,10 +382,12 @@ func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerI
 				}).Warn("File is empty in container")
 			}
 
-			outFile, err := os.Create(header.Name)
+			// Use the tar entry's base name only, confined to workDir.
+			outFilename := filepath.Join(workDir, filepath.Base(header.Name))
+			outFile, err := os.Create(outFilename)
 			if err != nil {
 				log.WithFields(log.Fields{
-					"filename": header.Name,
+					"filename": outFilename,
 					"error":    err,
 				}).Error("Error creating file")
 				continue
@@ -383,7 +396,7 @@ func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerI
 			bytesWritten, err := io.Copy(outFile, tarReader)
 			if err != nil {
 				log.WithFields(log.Fields{
-					"filename": header.Name,
+					"filename": outFilename,
 					"error":    err,
 				}).Error("Error copying file content")
 				outFile.Close()
@@ -394,10 +407,10 @@ func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerI
 
 			// Only add to list if successfully written
 			log.WithFields(log.Fields{
-				"filename":     header.Name,
+				"filename":     outFilename,
 				"bytesWritten": bytesWritten,
 			}).Debug("Successfully copied file from container")
-			filesToWrite = append(filesToWrite, header.Name)
+			filesToWrite = append(filesToWrite, outFilename)
 		}
 		reader.Close()
 	}

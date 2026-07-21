@@ -30,6 +30,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +44,8 @@ import (
 )
 
 // CollectVM performs log and configuration collection from VM deployments.
-func CollectVM(ctx context.Context, cfg *Config) ([]string, error) {
+// Intermediate files are written under workDir rather than the current working directory.
+func CollectVM(ctx context.Context, cfg *Config, workDir string) ([]string, error) {
 	log.Info("Running in VM mode")
 
 	if cfg.LineLimit == LineLimitDefault {
@@ -67,7 +69,8 @@ func CollectVM(ctx context.Context, cfg *Config) ([]string, error) {
 			return nil, err
 		}
 
-		configSummary, err := os.Create("vm-kong-env.txt")
+		kongEnvFilename := filepath.Join(workDir, "vm-kong-env.txt")
+		configSummary, err := os.Create(kongEnvFilename)
 		if err != nil {
 			log.WithError(err).Error("Error creating vm-kong-env.txt")
 			return nil, err
@@ -85,7 +88,7 @@ func CollectVM(ctx context.Context, cfg *Config) ([]string, error) {
 			return nil, err
 		}
 
-		filesToZip = append(filesToZip, "vm-kong-env.txt")
+		filesToZip = append(filesToZip, kongEnvFilename)
 
 		// Collect VM resources in parallel
 		type resourceTask struct {
@@ -111,14 +114,15 @@ func CollectVM(ctx context.Context, cfg *Config) ([]string, error) {
 			go func(t resourceTask) {
 				defer wg.Done()
 
-				if err := getResourceAndMarshall(t.function, t.resourceType, t.logFile); err != nil {
+				logFilePath := filepath.Join(workDir, t.logFile)
+				if err := getResourceAndMarshall(t.function, t.resourceType, logFilePath); err != nil {
 					log.WithFields(log.Fields{
 						"resourceType": t.resourceType,
 						"error":        err,
 					}).Error("Error retrieving resource info")
 				} else {
 					mu.Lock()
-					resourceFiles = append(resourceFiles, t.logFile)
+					resourceFiles = append(resourceFiles, logFilePath)
 					mu.Unlock()
 				}
 			}(task)
@@ -131,14 +135,15 @@ func CollectVM(ctx context.Context, cfg *Config) ([]string, error) {
 		filesToZip = append(filesToZip, resourceFiles...)
 
 		for _, v := range filesToCopy {
-			if err := copyFiles(v[0], v[1]); err != nil {
+			dstPath := filepath.Join(workDir, v[1])
+			if err := copyFiles(v[0], dstPath); err != nil {
 				log.WithFields(log.Fields{
 					"src":   v[0],
-					"dst":   v[1],
+					"dst":   dstPath,
 					"error": err,
 				}).Error("Error copying file")
 			} else {
-				filesToZip = append(filesToZip, v[1])
+				filesToZip = append(filesToZip, dstPath)
 			}
 		}
 
@@ -146,7 +151,7 @@ func CollectVM(ctx context.Context, cfg *Config) ([]string, error) {
 		configKeys := []string{"admin_access_log", "admin_error_log", "proxy_access_log", "proxy_error_log"}
 
 		for _, v := range configKeys {
-			logName := collectAndLimitLog(string(d), v, prefixDir, cfg.LineLimit, cfg.RedactTerms)
+			logName := collectAndLimitLog(string(d), v, prefixDir, cfg.LineLimit, cfg.RedactTerms, workDir)
 			if logName != "" {
 				filesToZip = append(filesToZip, logName)
 			}
@@ -183,8 +188,9 @@ func getResourceAndMarshall(functionName func() (interface{}, error), resourceTy
 	return nil
 }
 
-// collectAndLimitLog collects logs and limits them to a specific number of lines.
-func collectAndLimitLog(envars, configKey, prefixDir string, lineLimit int64, strToRedact []string) string {
+// collectAndLimitLog collects logs and limits them to a specific number of lines,
+// writing the extracted log under workDir.
+func collectAndLimitLog(envars, configKey, prefixDir string, lineLimit int64, strToRedact []string, workDir string) string {
 	log.WithField("configKey", configKey).Debug("Collecting and limiting log")
 
 	splitEnvars := strings.Split(envars, "\n")
@@ -310,7 +316,7 @@ func collectAndLimitLog(envars, configKey, prefixDir string, lineLimit int64, st
 
 				concatLogs := strings.Join(sanitizedLogLines, "\n")
 				if len(concatLogs) > 0 {
-					logName, err := createAndWriteLogFile(configKey, concatLogs)
+					logName, err := createAndWriteLogFile(configKey, concatLogs, workDir)
 					if err != nil {
 						log.WithFields(log.Fields{
 							"configKey": configKey,

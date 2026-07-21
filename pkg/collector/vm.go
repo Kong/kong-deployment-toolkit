@@ -23,7 +23,6 @@ THE SOFTWARE.
 package collector
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -69,15 +68,20 @@ func CollectVM(ctx context.Context, cfg *Config, workDir string) ([]string, erro
 			return nil, err
 		}
 
+		kongEnvContent := string(d)
+		if cfg.SanitizeConfigs {
+			kongEnvContent = sanitizeKongEnvContent(kongEnvContent)
+		}
+
 		kongEnvFilename := filepath.Join(workDir, "vm-kong-env.txt")
-		configSummary, err := os.Create(kongEnvFilename)
+		configSummary, err := createSecureFile(kongEnvFilename)
 		if err != nil {
 			log.WithError(err).Error("Error creating vm-kong-env.txt")
 			return nil, err
 		}
 
 		log.Info("Writing kong environment data")
-		if _, err = io.Copy(configSummary, bytes.NewReader(d)); err != nil {
+		if _, err = io.Copy(configSummary, strings.NewReader(kongEnvContent)); err != nil {
 			log.WithError(err).Error("Error writing kong environment data")
 			configSummary.Close()
 			return nil, err
@@ -180,7 +184,7 @@ func getResourceAndMarshall(functionName func() (interface{}, error), resourceTy
 		return err
 	}
 
-	err = os.WriteFile(logFile, infoJSON, 0644)
+	err = os.WriteFile(logFile, infoJSON, 0600)
 	if err != nil {
 		return err
 	}
@@ -391,7 +395,7 @@ func copyFiles(srcFile string, dstFile string) error {
 	}
 	defer sourceFile.Close()
 
-	destinationFile, err := os.Create(dstFile)
+	destinationFile, err := createSecureFile(dstFile)
 	if err != nil {
 		return err
 	}

@@ -10,16 +10,14 @@ Supported runtimes: **Docker**, **Kubernetes**, and **VM**.
 
 > **This is an early release intended for testing and feedback only. Do NOT run it against production systems.**
 >
-> The output archive can contain sensitive data that is **not** automatically redacted, including but not limited to:
+> The output archive can still contain sensitive data that requires care before sharing, including but not limited to:
 >
-> - The contents of Kong's `.kong_env` file (VM mode) — typically includes `pg_password`, `cluster_cert_key`, license data, vault credentials, SMTP credentials, etc.
-> - Container/pod environment variables passed inline (`docker inspect` output and pod YAML).
-> - Process command lines (VM mode) — may include credentials passed as arguments.
-> - Application logs — Kong access logs commonly include `Authorization` headers, JWTs, cookies, and request bodies.
+> - Process command lines (VM mode) — may include credentials passed as arguments. Not covered by `--sanitize`.
+> - Application logs — Kong access logs commonly include `Authorization` headers, JWTs, cookies, and request bodies. Use `--redact-logs` to redact known sensitive terms from log output.
 >
-> The `--sanitize` flag (default: on) only scrubs a small set of known fields in the Kong root configuration and the deck workspace dumps. It does **not** sanitize `.kong_env`, env vars, log lines, or `docker inspect` output.
+> The `--sanitize` flag (default: on) redacts values for keys/env vars matching common secret-name patterns (`password`, `secret`, `token`, `*_key`, `*_conf`, `cert`, `license`) across the Kong root configuration, deck workspace dumps, the VM `.kong_env` file, `docker inspect` output, and pod YAML env vars. It is pattern-based, not exhaustive — a secret stored under an unusual key name may not be caught. Collected files and the final archive are created with `0600` permissions (owner read/write only).
 >
-> **Before sharing the archive with anyone, extract it and review the contents.** Use `--redact-logs` to redact known sensitive terms from log output.
+> **Before sharing the archive with anyone, extract it and review the contents.**
 
 ---
 
@@ -36,7 +34,7 @@ For every Kong-matching container / pod / VM the tool gathers:
 
 If the Kong Admin API is reachable (KDD enabled, the default), the tool also collects:
 
-- Root configuration (sanitized denylist for `pg_password`, `cassandra_password`, `*_session_conf`, `*_cert_key`, `vitals_tsdb_address`)
+- Root configuration (sanitized: explicit denylist plus pattern-based redaction of any key matching `password`, `secret`, `*_key`, `*_conf`, `token`, or `license_data`)
 - `/status` output
 - `/license/report` output
 - Per-workspace entity counts (consumers, services, routes, plugins, etc.)
@@ -156,7 +154,7 @@ kdt collect \
 | `--konnect-control-plane-name` | `-c` | _none_ | Required with `--konnect-mode`. |
 | `--disable-kdd` | `-q` | `false` | Skip the Admin API / KDD collection step. |
 | `--dump-workspace-configs` | `-d` | `false` | Dump each workspace's configuration via deck. Ignored if `--disable-kdd` is set. |
-| `--sanitize` | `-s` | `true` | Redact a denylist of sensitive fields in the KDD root config and run deck dumps through `deck sanitize`. **Does not cover `.kong_env`, env vars, log lines, or `docker inspect`.** |
+| `--sanitize` | `-s` | `true` | Redact sensitive fields (denylist + secret-name pattern match) in the KDD root config, deck dumps (via `deck sanitize`), the VM `.kong_env` file, `docker inspect` env vars, and pod YAML env vars. **Does not cover log lines or process command lines.** |
 | `--redact-logs` | `-R` | _none_ | CSV list of substrings to replace with `<REDACTED>` in collected logs. Case-insensitive. |
 | `--line-limit` | | `1000` | Maximum log lines collected per source. Overridden by `--docker-since` / `--k8s-since-seconds` when set. |
 | `--docker-since` | | _none_ | Collect Docker logs newer than this relative duration (e.g. `5s`, `2m`, `3h`). Docker mode only. |
@@ -215,12 +213,10 @@ The resulting `<timestamp>-support.tar.gz` is written to the mounted working dir
 
 ## Known issues (pre-release)
 
-- **`--sanitize` coverage is partial.** Specifically, the following are written to the archive verbatim:
-  - `.kong_env` (VM mode)
-  - Pod env vars in pod YAML
-  - Container env vars in `docker inspect` output
+- **`--sanitize` coverage is pattern-based, not exhaustive.** The following are still written to the archive verbatim:
   - Process command lines and network connection details (VM mode)
   - Log lines (unless `--redact-logs` is used)
+  - Any secret stored under a key/env-var name that doesn't match the `password`/`secret`/`token`/`*_key`/`*_conf`/`cert`/`license` patterns
 - **`--redact-logs` lowercases the log line** while matching, which alters the captured log content even when nothing is redacted.
 - **The Makefile build targets still reference the old `kdt` binary name.** Build with the `go build -o bin/kdt …` commands above until the Makefile is updated.
 

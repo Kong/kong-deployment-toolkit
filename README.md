@@ -217,7 +217,6 @@ The resulting `<timestamp>-support.tar.gz` is written to the mounted working dir
   - Process command lines and network connection details (VM mode)
   - Log lines (unless `--redact-logs` is used)
   - Any secret stored under a key/env-var name that doesn't match the `password`/`secret`/`token`/`*_key`/`*_conf`/`cert`/`license` patterns
-- **`--redact-logs` lowercases the log line** while matching, which alters the captured log content even when nothing is redacted.
 - **The Makefile build targets still reference the old `kdt` binary name.** Build with the `go build -o bin/kdt …` commands above until the Makefile is updated.
 
 Please file feedback against these issues — they are on the punch list before the tool can be recommended for production environments.

@@ -53,7 +53,7 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 	commandsToRun := []NamedCommand{
 		{Cmd: []string{"top", "-b", "-n", "1"}, Name: "top"},
 		{Cmd: []string{"ls", "-lart", "/usr/local/share/lua/5.1/kong/templates"}, Name: "templates"},
-		{Cmd: []string{"sh", "-c", "ulimit", "-n"}, Name: "ulimit"},
+		{Cmd: []string{"sh", "-c", "ulimit -n"}, Name: "ulimit"},
 		{Cmd: []string{"uname", "-a"}, Name: "uname"},
 		{Cmd: []string{"ps", "aux"}, Name: "ps"},
 		{Cmd: []string{"df", "-h"}, Name: "df"},
@@ -81,6 +81,7 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 		for _, i := range cfg.TargetImages {
 			if strings.Contains(c.Image, i) {
 				kongContainers = append(kongContainers, c)
+				break
 			}
 		}
 	}
@@ -94,7 +95,19 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 		log.WithField("containerID", c.ID).Info("Inspecting container")
 
 		sanitizedImageName := sanitizeFilename(strings.NewReplacer(":", "-", "/", "-").Replace(c.Image))
-		sanitizedContainerName := sanitizeFilename(strings.ReplaceAll(c.Names[0], "/", ""))
+
+		// Docker containers should always have at least one name, but the
+		// daemon's API guarantees nothing about the shape of a container it
+		// returns (e.g. mid-teardown); fall back to a truncated ID rather than
+		// panicking on an empty Names slice.
+		containerName := c.ID
+		if len(containerName) > 12 {
+			containerName = containerName[:12]
+		}
+		if len(c.Names) > 0 {
+			containerName = strings.ReplaceAll(c.Names[0], "/", "")
+		}
+		sanitizedContainerName := sanitizeFilename(containerName)
 
 		copiedFiles, err := CopyFilesFromContainers(ctx, cli, c.ID, filesToCopy, workDir, sanitizedContainerName)
 		if err != nil {
@@ -237,15 +250,24 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 
 // AnalyseLogLineForRedaction redacts specified terms from a log line.
 func AnalyseLogLineForRedaction(line string, strToRedact []string) string {
-	returnLine := strings.ToLower(line)
+	result := line
 
-	for _, v := range strToRedact {
-		if strings.Contains(returnLine, strings.ToLower(v)) {
-			returnLine = strings.ReplaceAll(returnLine, strings.ToLower(v), "<REDACTED>")
+	for _, term := range strToRedact {
+		if term == "" {
+			continue
+		}
+
+		lowerTerm := strings.ToLower(term)
+		for {
+			idx := strings.Index(strings.ToLower(result), lowerTerm)
+			if idx == -1 {
+				break
+			}
+			result = result[:idx] + redactedValue + result[idx+len(term):]
 		}
 	}
 
-	return returnLine
+	return result
 }
 
 // RunCommandsInContainer executes commands inside a Docker container and saves output to files under workDir.

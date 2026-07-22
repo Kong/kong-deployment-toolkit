@@ -57,7 +57,7 @@ func CollectKubernetes(ctx context.Context, cfg *Config, workDir string) ([]stri
 	commandsToRun := []NamedCommand{
 		{Cmd: []string{"top", "-b", "-n", "1"}, Name: "top"},
 		{Cmd: []string{"ls", "-lart", "/usr/local/share/lua/5.1/kong/templates"}, Name: "templates"},
-		{Cmd: []string{"sh", "-c", "ulimit", "-n"}, Name: "ulimit"},
+		{Cmd: []string{"sh", "-c", "ulimit -n"}, Name: "ulimit"},
 		{Cmd: []string{"uname", "-a"}, Name: "uname"},
 		{Cmd: []string{"ps", "aux"}, Name: "ps"},
 		{Cmd: []string{"df", "-h"}, Name: "df"},
@@ -448,7 +448,7 @@ func RunCommandInPod(
 	}
 
 	var stdout, stderr bytes.Buffer
-	err = exec.StreamWithContext(context.TODO(), remotecommand.StreamOptions{
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 		Stdout: &stdout,
 		Stderr: &stderr,
 	})

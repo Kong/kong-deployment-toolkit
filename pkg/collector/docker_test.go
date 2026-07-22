@@ -89,3 +89,46 @@ func TestDecodeDockerMultiplexedStream_StdoutAndStderrInterleaved(t *testing.T) 
 		t.Errorf("decodeDockerMultiplexedStream() = %q, want %q", got, want)
 	}
 }
+
+func TestAnalyseLogLineForRedaction(t *testing.T) {
+	tests := []struct {
+		name     string
+		line     string
+		toRedact []string
+		want     string
+	}{
+		{
+			name:     "no match leaves line unchanged",
+			line:     "Hello World",
+			toRedact: []string{"zzz"},
+			want:     "Hello World",
+		},
+		{
+			name:     "mixed-case term is redacted, case preserved elsewhere",
+			line:     "Authorization: Bearer AbC",
+			toRedact: []string{"bearer abc"},
+			want:     "Authorization: <REDACTED>",
+		},
+		{
+			name:     "multiple occurrences of the same term are all redacted",
+			line:     "secret=hunter2 other=1 SECRET=hunter2",
+			toRedact: []string{"hunter2"},
+			want:     "secret=<REDACTED> other=1 SECRET=<REDACTED>",
+		},
+		{
+			name:     "empty redact term is ignored, not an infinite loop",
+			line:     "Hello World",
+			toRedact: []string{""},
+			want:     "Hello World",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := AnalyseLogLineForRedaction(tt.line, tt.toRedact)
+			if got != tt.want {
+				t.Errorf("AnalyseLogLineForRedaction(%q, %v) = %q, want %q", tt.line, tt.toRedact, got, tt.want)
+			}
+		})
+	}
+}

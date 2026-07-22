@@ -294,10 +294,11 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 				continue
 			}
 
-			sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(container.Image, ":", "/"), "/", "-")
-			logsFilename := filepath.Join(workDir, fmt.Sprintf("%s-%s.log", pod.Name, sanitizedImageName))
+			sanitizedImageName := sanitizeFilename(strings.NewReplacer(":", "-", "/", "-").Replace(container.Image))
+			sanitizedPodName := sanitizeFilename(pod.Name)
+			logsFilename := filepath.Join(workDir, fmt.Sprintf("%s-%s.log", sanitizedPodName, sanitizedImageName))
 
-			logFile, err := os.Create(logsFilename)
+			logFile, err := createSecureFile(logsFilename)
 			if err != nil {
 				log.WithFields(log.Fields{
 					"filename": logsFilename,
@@ -331,14 +332,18 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 			logFilenames = append(logFilenames, logsFilename)
 		}
 
-		podDefFileName := filepath.Join(workDir, fmt.Sprintf("%s.yaml", p.Name))
-		podDefFile, err := os.Create(podDefFileName)
+		podDefFileName := filepath.Join(workDir, fmt.Sprintf("%s.yaml", sanitizeFilename(p.Name)))
+		podDefFile, err := createSecureFile(podDefFileName)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"filename": podDefFileName,
 				"error":    err,
 			}).Error("Error creating pod definition file")
 			continue
+		}
+
+		if cfg.SanitizeConfigs {
+			sanitizePodEnv(&pod)
 		}
 
 		buf := bytes.NewBufferString("")
@@ -378,6 +383,23 @@ func writePodDetails(ctx context.Context, clientSet kubernetes.Interface, podLis
 	}
 
 	return logFilenames, nil
+}
+
+// sanitizePodEnv redacts the values of container environment variables in pod
+// whose name matches envVarPattern. ValueFrom-sourced entries are left untouched
+// since they carry no literal secret (they reference a Secret/ConfigMap by name).
+func sanitizePodEnv(pod *corev1.Pod) {
+	for ci := range pod.Spec.Containers {
+		env := pod.Spec.Containers[ci].Env
+		for ei := range env {
+			if env[ei].Value == "" {
+				continue
+			}
+			if envVarPattern.MatchString(env[ei].Name) {
+				env[ei].Value = redactedValue
+			}
+		}
+	}
 }
 
 // RunCommandInPod executes a command inside a Kubernetes pod container and
@@ -442,8 +464,11 @@ func RunCommandInPod(
 		return "", err
 	}
 
-	sanitizedName := strings.ReplaceAll(namedCmd.Name, "/", "-")
-	dstFile := filepath.Join(workDir, fmt.Sprintf("%s-%s.log", container, sanitizedName))
+	// Prefix with pod name (not just container name): container names repeat
+	// across pods (e.g. every pod's Kong container may be named "proxy"), so
+	// container name alone is not enough to avoid overwriting another pod's output.
+	sanitizedName := sanitizeFilename(strings.ReplaceAll(namedCmd.Name, "/", "-"))
+	dstFile := filepath.Join(workDir, fmt.Sprintf("%s-%s-%s.log", sanitizeFilename(pod), sanitizeFilename(container), sanitizedName))
 
 	err = WriteOutputToFile(dstFile, stdout.Bytes())
 	if err != nil {
@@ -462,7 +487,7 @@ func createAndWriteLogFile(initialLogName string, contents string, workDir strin
 	hostname, _ := os.Hostname()
 	logName := filepath.Join(workDir, fmt.Sprintf(hostname+"_"+initialLogName+"-%s.log", time.Now().Format("2006-01-02-15-04-05")))
 
-	logFile, err := os.Create(logName)
+	logFile, err := createSecureFile(logName)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"initialLogName": initialLogName,

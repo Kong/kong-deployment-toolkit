@@ -27,9 +27,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -93,7 +93,10 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 	for _, c := range kongContainers {
 		log.WithField("containerID", c.ID).Info("Inspecting container")
 
-		copiedFiles, err := CopyFilesFromContainers(ctx, cli, c.ID, filesToCopy, workDir)
+		sanitizedImageName := sanitizeFilename(strings.NewReplacer(":", "-", "/", "-").Replace(c.Image))
+		sanitizedContainerName := sanitizeFilename(strings.ReplaceAll(c.Names[0], "/", ""))
+
+		copiedFiles, err := CopyFilesFromContainers(ctx, cli, c.ID, filesToCopy, workDir, sanitizedContainerName)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"containerID": c.ID,
@@ -101,7 +104,7 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 			}).Error("Error copying files from container")
 		}
 
-		executedFiles, err := RunCommandsInContainer(ctx, cli, c.ID, commandsToRun, workDir)
+		executedFiles, err := RunCommandsInContainer(ctx, cli, c.ID, commandsToRun, workDir, sanitizedContainerName)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"containerID": c.ID,
@@ -113,7 +116,7 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 		filesToZip = append(filesToZip, copiedFiles...)
 		filesToZip = append(filesToZip, executedFiles...)
 
-		_, b, err := cli.ContainerInspectWithRaw(ctx, c.ID, false)
+		inspect, err := cli.ContainerInspect(ctx, c.ID)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"containerID": c.ID,
@@ -122,16 +125,18 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 			continue
 		}
 
-		prettyJSON, err := formatJSON(b)
+		if cfg.SanitizeConfigs && inspect.Config != nil {
+			inspect.Config.Env = sanitizeEnvVars(inspect.Config.Env)
+		}
+
+		prettyJSON, err := json.MarshalIndent(inspect, "", "    ")
 		if err != nil {
 			log.WithError(err).Error("Unable to format JSON")
 			continue
 		}
 
-		sanitizedImageName := strings.ReplaceAll(strings.ReplaceAll(c.Image, ":", "/"), "/", "-")
-		sanitizedContainerName := strings.ReplaceAll(c.Names[0], "/", "")
 		inspectFilename := filepath.Join(workDir, fmt.Sprintf("%s-%s.json", sanitizedContainerName, sanitizedImageName))
-		inspectFile, err := os.Create(inspectFilename)
+		inspectFile, err := createSecureFile(inspectFilename)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"filename": inspectFilename,
@@ -161,7 +166,7 @@ func CollectDocker(ctx context.Context, cfg *Config, workDir string) ([]string, 
 		filesToZip = append(filesToZip, inspectFilename)
 
 		logsFilename := filepath.Join(workDir, fmt.Sprintf("%s-%s.log", sanitizedContainerName, sanitizedImageName))
-		logFile, err := os.Create(logsFilename)
+		logFile, err := createSecureFile(logsFilename)
 		if err != nil {
 			log.WithFields(log.Fields{
 				"filename": logsFilename,
@@ -244,7 +249,9 @@ func AnalyseLogLineForRedaction(line string, strToRedact []string) string {
 }
 
 // RunCommandsInContainer executes commands inside a Docker container and saves output to files under workDir.
-func RunCommandsInContainer(ctx context.Context, cli *client.Client, containerID string, commands []NamedCommand, workDir string) ([]string, error) {
+// namePrefix (typically the sanitized container name) is prepended to each output filename so that
+// commands with the same Name from different containers do not overwrite each other.
+func RunCommandsInContainer(ctx context.Context, cli *client.Client, containerID string, commands []NamedCommand, workDir string, namePrefix string) ([]string, error) {
 	// Pre-allocate with the number of commands
 	filesToWrite := make([]string, 0, len(commands))
 
@@ -292,7 +299,7 @@ func RunCommandsInContainer(ctx context.Context, cli *client.Client, containerID
 
 		resp.Close()
 
-		outputFilename := filepath.Join(workDir, nc.Name)
+		outputFilename := filepath.Join(workDir, namePrefix+"-"+nc.Name)
 		err = WriteOutputToFile(outputFilename, output)
 		if err != nil {
 			log.WithFields(log.Fields{
@@ -319,8 +326,15 @@ func decodeDockerMultiplexedStream(reader io.Reader) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
+// maxTarEntryBytes bounds how much of a single tar entry CopyFilesFromContainers will
+// write to disk, so a maliciously large or corrupt entry from the Docker daemon can't
+// exhaust the collector host's disk space.
+const maxTarEntryBytes int64 = 512 * 1024 * 1024 // 512 MiB
+
 // CopyFilesFromContainers copies files from a Docker container into workDir on the local filesystem.
-func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerID string, files []string, workDir string) ([]string, error) {
+// namePrefix (typically the sanitized container name) is prepended to each output filename so that
+// the same file (e.g. /etc/hosts) copied from different containers does not overwrite itself.
+func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerID string, files []string, workDir string, namePrefix string) ([]string, error) {
 	log.WithFields(log.Fields{
 		"containerID": containerID,
 		"fileCount":   len(files),
@@ -382,9 +396,9 @@ func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerI
 				}).Warn("File is empty in container")
 			}
 
-			// Use the tar entry's base name only, confined to workDir.
-			outFilename := filepath.Join(workDir, filepath.Base(header.Name))
-			outFile, err := os.Create(outFilename)
+			// Use the tar entry's base name only, prefixed per-container, confined to workDir.
+			outFilename := filepath.Join(workDir, namePrefix+"-"+filepath.Base(header.Name))
+			outFile, err := createSecureFile(outFilename)
 			if err != nil {
 				log.WithFields(log.Fields{
 					"filename": outFilename,
@@ -393,14 +407,20 @@ func CopyFilesFromContainers(ctx context.Context, cli *client.Client, containerI
 				continue
 			}
 
-			bytesWritten, err := io.Copy(outFile, tarReader)
-			if err != nil {
+			bytesWritten, err := io.CopyN(outFile, tarReader, maxTarEntryBytes)
+			if err != nil && err != io.EOF {
 				log.WithFields(log.Fields{
 					"filename": outFilename,
 					"error":    err,
 				}).Error("Error copying file content")
 				outFile.Close()
 				continue
+			}
+			if err == nil {
+				log.WithFields(log.Fields{
+					"filename": outFilename,
+					"maxBytes": maxTarEntryBytes,
+				}).Warn("Tar entry exceeded max copy size and was truncated")
 			}
 
 			outFile.Close()

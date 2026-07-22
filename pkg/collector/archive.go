@@ -54,7 +54,7 @@ func CreateArchive(filesToWrite []string, outputDir string) (string, error) {
 
 	log.WithField("filename", outputName).Info("Creating archive")
 
-	output, err := os.Create(outputName)
+	output, err := createSecureFile(outputName)
 	if err != nil {
 		log.WithError(err).Error("Failed to create output file")
 		return "", err
@@ -81,8 +81,16 @@ func CreateArchive(filesToWrite []string, outputDir string) (string, error) {
 		}
 	}()
 
-	// Iterate over files and add them to the tar archive
+	// Iterate over files and add them to the tar archive, skipping any duplicate
+	// paths so the same source file is never written into the archive twice.
+	seen := make(map[string]struct{}, len(filesToWrite))
 	for _, file := range filesToWrite {
+		if _, dup := seen[file]; dup {
+			log.WithField("file", file).Debug("Skipping duplicate file already added to archive")
+			continue
+		}
+		seen[file] = struct{}{}
+
 		err := addToArchive(tw, file)
 		if err != nil {
 			log.WithFields(log.Fields{
@@ -151,9 +159,17 @@ func addToArchive(tw *tar.Writer, filename string) error {
 // WriteOutputToFile writes data to a file with the specified filename.
 func WriteOutputToFile(filename string, data []byte) error {
 	log.WithField("filename", filename).Debug("Writing output to file")
-	err := os.WriteFile(filename, data, 0644)
+	err := os.WriteFile(filename, data, 0600)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// createSecureFile creates (or truncates) a file for writing with 0600
+// permissions. Collected diagnostic output routinely contains credentials, so
+// none of it should be created with the default, world-readable 0666 that
+// os.Create would otherwise apply.
+func createSecureFile(name string) (*os.File, error) {
+	return os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 }

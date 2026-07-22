@@ -23,7 +23,6 @@ THE SOFTWARE.
 package collector
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -243,7 +242,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 						return
 					}
 
-					dumpFilename := filepath.Join(workDir, workspace.Name+"-kong-dump.yaml")
+					dumpFilename := filepath.Join(workDir, sanitizeFilename(workspace.Name)+"-kong-dump.yaml")
 					err = sanitizeKongState(ctx, wsClient, ks, file.WriteConfig{
 						KongVersion: summaryInfo.KongVersion,
 						Filename:    dumpFilename,
@@ -277,7 +276,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 		}
 
 		kddJSONPath := filepath.Join(workDir, "KDD.json")
-		err = os.WriteFile(kddJSONPath, jsonBytes, 0644)
+		err = os.WriteFile(kddJSONPath, jsonBytes, 0600)
 		if err != nil {
 			log.WithError(err).Fatal("Error writing KDD.json")
 			return filesToZip, err
@@ -399,7 +398,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 			return nil, fmt.Errorf("building state: %w", err)
 		}
 
-		filename := filepath.Join(workDir, "konnect-"+controlPlaneName+".yaml")
+		filename := filepath.Join(workDir, "konnect-"+sanitizeFilename(controlPlaneName)+".yaml")
 		err = sanitizeKongState(ctx, kongClient, ks, file.WriteConfig{
 			SelectTags:       dumpConfig.SelectorTags,
 			Filename:         filename,
@@ -429,7 +428,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 	}
 
 	kddJSONPath := filepath.Join(workDir, "KDD.json")
-	err = os.WriteFile(kddJSONPath, jsonBytes, 0644)
+	err = os.WriteFile(kddJSONPath, jsonBytes, 0600)
 	if err != nil {
 		log.WithError(err).Fatal("Error writing KDD.json")
 		return filesToZip, err
@@ -472,16 +471,6 @@ func buildTLSConfig(cfg *Config) (utils.TLSConfig, error) {
 	return tlsConfig, nil
 }
 
-// formatJSON formats JSON data with indentation.
-func formatJSON(data []byte) ([]byte, error) {
-	var out bytes.Buffer
-	err := json.Indent(&out, data, "", "    ")
-	if err == nil {
-		return out.Bytes(), err
-	}
-	return data, nil
-}
-
 // sanitizeKongState sanitizes a Kong state and writes it to a file.
 func sanitizeKongState(ctx context.Context, client *kong.Client, ks *state.KongState, writeConfig file.WriteConfig, isKonnect bool, sanitizeConfigs bool) error {
 	if !sanitizeConfigs {
@@ -521,10 +510,15 @@ func sanitizeRootConfig(config objx.Map, sanitizeConfigs bool) objx.Map {
 		return config
 	}
 
-	// Create a copy to avoid mutating the original
-	sanitized := objx.New(config)
+	// objx.Map.Copy() performs a shallow copy: nested maps (like "configuration",
+	// copied again below) are still shared with the original until copied
+	// themselves. objx.New(config) - used here previously - does not copy at all,
+	// it's a bare type-cast, so mutations below would have leaked into the caller's
+	// original rootConfig map.
+	sanitized := config.Copy()
 
-	// List of sensitive configuration keys that should be redacted
+	// Explicit list of known-sensitive configuration keys that should always be
+	// redacted, kept in addition to the pattern match below for clarity/documentation.
 	sensitiveKeys := []string{
 		"pg_password",
 		"cassandra_password",
@@ -539,12 +533,24 @@ func sanitizeRootConfig(config objx.Map, sanitizeConfigs bool) objx.Map {
 
 	// Redact sensitive configuration values
 	if confValue := sanitized.Get("configuration"); confValue.IsObjxMap() {
-		confMap := confValue.ObjxMap()
+		confMap := confValue.ObjxMap().Copy()
+
 		for _, key := range sensitiveKeys {
 			if confMap.Has(key) {
-				confMap.Set(key, "<REDACTED>")
+				confMap.Set(key, redactedValue)
 			}
 		}
+
+		// Pattern-based catch-all: covers keys the explicit list above doesn't
+		// name individually, e.g. smtp_password, keyring_*, vault_*, konnect_*
+		// tokens, *_auth_conf, license_data.
+		for key := range confMap {
+			if configKeyPattern.MatchString(key) {
+				confMap[key] = redactedValue
+			}
+		}
+
+		sanitized.Set("configuration", confMap)
 	}
 
 	return sanitized

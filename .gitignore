@@ -34,3 +34,7 @@ cbr.sh
 Archive/
 
 !.github/workflows/*.yaml
+!.goreleaser.yaml
+
+# GoReleaser's local build output
+dist/

@@ -30,7 +30,7 @@ For every Kong-matching container / pod / VM the tool gathers:
 - `top`, `ps aux`, `df -h`, `free -h`, `uname -a`, `ulimit -n`, and a listing of Kong's Lua templates directory
 - Docker mode: `docker inspect` JSON per Kong container
 - Kubernetes mode: pod YAML per Kong pod
-- VM mode: `.kong_env` (verbatim), Kong access/error logs, plus host memory, CPU, disk, process, and network summaries
+- VM mode: `.kong_env` (sanitized when `--sanitize` is set), Kong access/error logs, plus host memory, CPU, disk, process, and network summaries
 
 If the Kong Admin API is reachable (KDD enabled, the default), the tool also collects:
 
@@ -43,6 +43,8 @@ If the Kong Admin API is reachable (KDD enabled, the default), the tool also col
 Everything is bundled into `<timestamp>-support.tar.gz` in the current working directory.
 
 > Log collection from Docker and Kubernetes relies on Kong logs going to stdout/stderr. File-based logs are not collected in those modes.
+>
+> All intermediate files are written to a private temporary directory for the duration of the run (not the current working directory) and removed automatically once the archive is created — a pre-existing file in your working directory that happens to share a name with a collected file (e.g. `ps`, `top`, `hosts`) is never read, overwritten, or deleted.
 
 ---
 
@@ -64,7 +66,7 @@ Make the binary executable and place it on your `PATH`.
 
 ### Build from source
 
-Requires Go 1.26.0 or later.
+Requires Go 1.26.0 or later (the module's `go.mod` declares this minimum so it stays compatible with other consumers of this module; 1.26.5 or later is recommended, since earlier 1.26.x patch releases have known stdlib vulnerabilities. Released binaries and the container image are built with 1.26.5+).
 
 ```sh
 # Linux amd64
@@ -190,7 +192,7 @@ These variables override the corresponding flags for standalone usage:
 
 ## Running in a container
 
-The container image needs access to whichever runtime you are collecting from:
+The image runs as a non-root, distroless user (no shell, no package manager). It needs access to whichever runtime you are collecting from:
 
 ```sh
 # Docker collection
@@ -206,6 +208,8 @@ docker run --rm \
   -v "$PWD":/out -w /out \
   kdt:latest collect --runtime kubernetes --namespace kong
 ```
+
+> **Docker mode + non-root image:** the Docker daemon socket is typically owned by `root:docker` and not world-accessible, so the container's non-root user may get `permission denied` connecting to a mounted `/var/run/docker.sock`. If that happens, either add the socket's group to the container (`--group-add $(stat -c '%g' /var/run/docker.sock)` on Linux) or override the user for that run (`docker run --user root ...`). Kubernetes and VM mode are unaffected.
 
 The resulting `<timestamp>-support.tar.gz` is written to the mounted working directory.
 

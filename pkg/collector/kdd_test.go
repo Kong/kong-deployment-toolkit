@@ -86,3 +86,26 @@ func TestSanitizeRootConfigDisabled(t *testing.T) {
 		t.Errorf("sanitizeRootConfig(sanitizeConfigs=false) redacted a value; want unchanged")
 	}
 }
+
+func TestNormalizeKonnectToken(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{"bare token", "eyJhbGciOi...", "eyJhbGciOi..."},
+		{"header-name:value as documented", "Authorization:Bearer eyJhbGciOi...", "eyJhbGciOi..."},
+		{"header-name:value lowercase bearer", "Authorization:bearer eyJhbGciOi...", "eyJhbGciOi..."},
+		{"value with surrounding whitespace", "Authorization: Bearer  eyJhbGciOi... ", "eyJhbGciOi..."},
+		{"bare token that happens to contain no colon or Bearer prefix", "plain-rbac-token", "plain-rbac-token"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeKonnectToken(tt.header)
+			if got != tt.want {
+				t.Errorf("normalizeKonnectToken(%q) = %q, want %q", tt.header, got, tt.want)
+			}
+		})
+	}
+}

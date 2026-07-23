@@ -34,11 +34,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shirou/gopsutil/cpu"
-	"github.com/shirou/gopsutil/disk"
-	"github.com/shirou/gopsutil/mem"
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
+	"github.com/shirou/gopsutil/v4/process"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -447,8 +447,8 @@ func RetrieveNetworkInfo() (interface{}, error) {
 			Fd:     v.Fd,
 			Family: v.Family,
 			Type:   v.Type,
-			Laddr:  v.Laddr.IP,
-			Raddr:  v.Raddr.IP,
+			Laddr:  fmt.Sprintf("%s:%d", v.Laddr.IP, v.Laddr.Port),
+			Raddr:  fmt.Sprintf("%s:%d", v.Raddr.IP, v.Raddr.Port),
 			Status: v.Status,
 			Pid:    v.Pid,
 			Uids:   v.Uids,
@@ -484,6 +484,10 @@ func RetrieveProcessInfo() (interface{}, error) {
 		}
 
 		pid := p.Pid
+		// CPUPercentWithContext measures usage since the process's last call (or
+		// creation); since each process here is only ever sampled once per
+		// collection run, this is a point-in-time value and will read 0 on a
+		// process's first (and only) sample here, not a sustained average.
 		cpuPercent, err := p.CPUPercentWithContext(ctx)
 		if err != nil {
 			log.WithFields(log.Fields{
@@ -515,7 +519,7 @@ func RetrieveProcessInfo() (interface{}, error) {
 			PID:        pid,
 			Name:       name,
 			CPUPercent: fmt.Sprintf("%.2f", cpuPercent),
-			MemPercent: memInfo.RSS,
+			RSSBytes:   memInfo.RSS,
 			CmdLine:    cmdLine,
 		})
 	}

@@ -20,8 +20,6 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	// kongv1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1"
-	// kongv1beta1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1beta1"
 )
 
 // supportCmd represents the base command when called without any subcommands
@@ -51,31 +49,8 @@ Please do NOT use screenshot for logs and configurations. Please save your logs 
 them to the case. We highly encourage you to provide reproduce steps to us. This will significantly reduce the time for debugging
 and finding a solution for you.`,
 	PreRun: toggleDebug,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	//RunE: func(cmd *cobra.Command, args []string) error {
-	//    if rType == "" {
-	//        runtime, err := guessRuntime()
-	//        if err != nil {
-	//            return err
-	//        }
-	//        rType = runtime
-	//    }
-	//    switch rType {
-	//    case "docker":
-	//        return runDocker()
-	//    case "kubernetes":
-	//        return runKubernetes()
-	//    case "vm":
-	//        fmt.Println("Not supported yet")
-	//    default:
-	//        fmt.Println("error")
-	//    }
-	//    return nil
-	//},
 }
 
 func init() {
 	rootCmd.AddCommand(supportCmd)
-	//supportCmd.PersistentFlags().StringVarP(&rType, "runtime", "r", "", "runtime")
 }

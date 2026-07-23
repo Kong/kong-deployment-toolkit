@@ -138,35 +138,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 
 		for _, ws := range workspaces.Data {
 			wg.Add(1)
-			go func(workspace struct {
-				Comment interface{} `json:"comment"`
-				Config  struct {
-					Meta                      interface{} `json:"meta"`
-					Portal                    bool        `json:"portal"`
-					PortalAccessRequestEmail  interface{} `json:"portal_access_request_email"`
-					PortalApprovedEmail       interface{} `json:"portal_approved_email"`
-					PortalAuth                interface{} `json:"portal_auth"`
-					PortalAuthConf            interface{} `json:"portal_auth_conf"`
-					PortalAutoApprove         interface{} `json:"portal_auto_approve"`
-					PortalCorsOrigins         interface{} `json:"portal_cors_origins"`
-					PortalDeveloperMetaFields string      `json:"portal_developer_meta_fields"`
-					PortalEmailsFrom          interface{} `json:"portal_emails_from"`
-					PortalEmailsReplyTo       interface{} `json:"portal_emails_reply_to"`
-					PortalInviteEmail         interface{} `json:"portal_invite_email"`
-					PortalIsLegacy            interface{} `json:"portal_is_legacy"`
-					PortalResetEmail          interface{} `json:"portal_reset_email"`
-					PortalResetSuccessEmail   interface{} `json:"portal_reset_success_email"`
-					PortalSessionConf         interface{} `json:"portal_session_conf"`
-					PortalTokenExp            interface{} `json:"portal_token_exp"`
-				} `json:"config"`
-				CreatedAt int    `json:"created_at"`
-				ID        string `json:"id"`
-				Meta      struct {
-					Color     string      `json:"color"`
-					Thumbnail interface{} `json:"thumbnail"`
-				} `json:"meta"`
-				Name string `json:"name"`
-			}) {
+			go func(workspace Workspace) {
 				defer wg.Done()
 				semaphore <- struct{}{}        // Acquire semaphore
 				defer func() { <-semaphore }() // Release semaphore
@@ -606,21 +578,4 @@ func getWorkspaces(ctx context.Context, client *kong.Client) (*Workspaces, error
 		return nil, err
 	}
 	return &w, nil
-}
-
-// parseHeaders parses a slice of header strings into an http.Header.
-func parseHeaders(headers []string) (http.Header, error) {
-	res := http.Header{}
-	const splitLen = 2
-
-	for _, keyValue := range headers {
-		split := strings.SplitN(keyValue, ":", 2)
-		if len(split) >= splitLen {
-			res.Add(split[0], split[1])
-		} else {
-			return nil, fmt.Errorf("splitting header key-value '%s'", keyValue)
-		}
-	}
-
-	return res, nil
 }

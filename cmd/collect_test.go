@@ -115,3 +115,27 @@ func TestApplyEnvVarOverrides_NamespaceAppliesOnlyWhenUnset(t *testing.T) {
 		t.Errorf("Namespace = %q, want %q (env var should not override explicit flag)", cfg2.Namespace, "from-flag")
 	}
 }
+
+func TestValidateRuntime(t *testing.T) {
+	tests := []struct {
+		runtime string
+		wantErr bool
+	}{
+		{"", false},
+		{"docker", false},
+		{"kubernetes", false},
+		{"vm", false},
+		{"Docker", true},
+		{"dockerr", true},
+		{"bare-metal", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.runtime, func(t *testing.T) {
+			err := validateRuntime(tt.runtime)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateRuntime(%q) error = %v, wantErr %v", tt.runtime, err, tt.wantErr)
+			}
+		})
+	}
+}

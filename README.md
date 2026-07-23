@@ -217,7 +217,7 @@ The resulting `<timestamp>-support.tar.gz` is written to the mounted working dir
   - Process command lines and network connection details (VM mode)
   - Log lines (unless `--redact-logs` is used)
   - Any secret stored under a key/env-var name that doesn't match the `password`/`secret`/`token`/`*_key`/`*_conf`/`cert`/`license` patterns
-- **The Makefile build targets still reference the old `kdt` binary name.** Build with the `go build -o bin/kdt …` commands above until the Makefile is updated.
+- **`govulncheck` in CI is informational, not a hard gate.** `github.com/docker/docker` currently has reachable findings with no client-side fix available upstream (daemon-side moby issues); see the workflow comment in `.github/workflows/build-and-compress.yaml`.
 
 Please file feedback against these issues — they are on the punch list before the tool can be recommended for production environments.
 

@@ -249,8 +249,6 @@ func collectAndLimitLog(envars, configKey, prefixDir string, lineLimit int64, st
 				continue
 			}
 
-			defer logFile.Close()
-
 			// Use buffered reading for better performance
 			const bufferSize = 64 * 1024 // 64KB buffer
 			buffer := make([]byte, bufferSize)
@@ -305,6 +303,20 @@ func collectAndLimitLog(envars, configKey, prefixDir string, lineLimit int64, st
 				}
 			}
 
+			// The backwards scan only recognizes a line once it sees the \n
+			// that precedes it, so the oldest line in the window (the first
+			// line in the file, or the first line after hitting lineLimit's
+			// read window) is left in singleLineBytes once the loop above
+			// exits without ever seeing a preceding newline for it.
+			if len(singleLineBytes) > 0 && linesProcessed < lineLimit {
+				for j, k := 0, len(singleLineBytes)-1; j < k; j, k = j+1, k-1 {
+					singleLineBytes[j], singleLineBytes[k] = singleLineBytes[k], singleLineBytes[j]
+				}
+				logLines = append(logLines, string(singleLineBytes))
+				linesProcessed++
+				success = true
+			}
+
 			if success {
 				// Flip the lines as they are read backwards
 				for i, j := 0, len(logLines)-1; i < j; i, j = i+1, j-1 {
@@ -331,6 +343,7 @@ func collectAndLimitLog(envars, configKey, prefixDir string, lineLimit int64, st
 							"configKey": configKey,
 							"logName":   logName,
 						}).Info("Log file successfully created")
+						logFile.Close()
 						return logName
 					}
 				} else {
@@ -352,11 +365,11 @@ func collectAndLimitLog(envars, configKey, prefixDir string, lineLimit int64, st
 
 // getConfigValue extracts the value from a configuration entry.
 func getConfigValue(entry string) string {
-	aEntry := strings.Split(entry, "=")
-	if len(aEntry) < 2 {
+	_, value, found := strings.Cut(entry, "=")
+	if !found {
 		return ""
 	}
-	return strings.Trim(aEntry[1], " ")
+	return strings.TrimSpace(value)
 }
 
 // getFileLength returns the length of a file in bytes.

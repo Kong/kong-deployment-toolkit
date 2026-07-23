@@ -87,7 +87,7 @@ var collectCmd = &cobra.Command{
 		// Apply environment variable overrides (backward compatibility).
 		// These were previously checked inside the library but are now
 		// handled at the CLI layer so the library only uses Config values.
-		applyEnvVarOverrides(cfg)
+		applyEnvVarOverrides(cmd, cfg)
 
 		// Run the collector
 		ctx := context.Background()
@@ -138,41 +138,60 @@ func init() {
 // applyEnvVarOverrides applies environment variable overrides to the collector config.
 // This preserves backward compatibility for standalone kdt usage. When used as a library
 // (e.g., from kongctl), the calling code controls all Config values directly.
-func applyEnvVarOverrides(cfg *collector.Config) {
-	if v := os.Getenv("KONG_RUNTIME"); v != "" && cfg.Runtime == "" {
+//
+// An override is only applied when the corresponding flag was not explicitly set on the
+// command line, so an explicit flag always wins over an environment variable. Boolean and
+// integer overrides are parsed with strconv; an unparseable value is logged and ignored
+// rather than silently coercing to false/zero.
+func applyEnvVarOverrides(cmd *cobra.Command, cfg *collector.Config) {
+	if v := os.Getenv("KONG_RUNTIME"); v != "" && !cmd.Flags().Changed("runtime") {
 		cfg.Runtime = v
 	}
-	if v := os.Getenv("KONG_ADDR"); v != "" {
+	if v := os.Getenv("KONG_ADDR"); v != "" && !cmd.Flags().Changed("kong-addr") {
 		cfg.KongAddr = v
 	}
-	if v := os.Getenv("RBAC_HEADER"); v != "" {
+	if v := os.Getenv("RBAC_HEADER"); v != "" && !cmd.Flags().Changed("rbac-header") {
+		// Comma-separated; a header value containing a literal comma cannot be
+		// represented this way (use --rbac-header, which can be repeated, instead).
 		cfg.RBACHeaders = strings.Split(v, ",")
 	}
-	if os.Getenv("KONG_KONNECT_MODE") != "" {
+	if os.Getenv("KONG_KONNECT_MODE") != "" && !cmd.Flags().Changed("konnect-mode") {
 		// Use KONG_KDD_KONNECT to avoid collision with native Kong variable KONG_KONNECT_MODE
 		// https://docs.konghq.com/gateway/latest/reference/configuration/#konnect_mode
 		if v, err := strconv.ParseBool(os.Getenv("KONG_KDD_KONNECT")); err == nil {
 			cfg.KonnectMode = v
+		} else {
+			log.WithError(err).Warn("KONG_KDD_KONNECT is not a valid boolean, ignoring KONG_KONNECT_MODE override")
 		}
 	}
-	if v := os.Getenv("DISABLE_KDD"); v != "" {
-		cfg.DisableKDD = (v == "true")
+	if v := os.Getenv("DISABLE_KDD"); v != "" && !cmd.Flags().Changed("disable-kdd") {
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			cfg.DisableKDD = parsed
+		} else {
+			log.WithError(err).Warn("DISABLE_KDD is not a valid boolean, ignoring")
+		}
 	}
-	if v := os.Getenv("DUMP_WORKSPACE_CONFIGS"); v != "" {
-		cfg.DumpWorkspaceConfigs = (v == "true")
+	if v := os.Getenv("DUMP_WORKSPACE_CONFIGS"); v != "" && !cmd.Flags().Changed("dump-workspace-configs") {
+		if parsed, err := strconv.ParseBool(v); err == nil {
+			cfg.DumpWorkspaceConfigs = parsed
+		} else {
+			log.WithError(err).Warn("DUMP_WORKSPACE_CONFIGS is not a valid boolean, ignoring")
+		}
 	}
-	if v := os.Getenv("DOCKER_LOGS_SINCE"); v != "" {
+	if v := os.Getenv("DOCKER_LOGS_SINCE"); v != "" && !cmd.Flags().Changed("docker-since") {
 		cfg.DockerLogsSince = v
 	}
-	if v := os.Getenv("TARGET_PODS"); v != "" {
+	if v := os.Getenv("TARGET_PODS"); v != "" && !cmd.Flags().Changed("target-pods") {
 		cfg.TargetPods = strings.Split(v, ",")
 	}
-	if v := os.Getenv("K8S_NAMESPACE"); v != "" && cfg.Namespace == "" {
+	if v := os.Getenv("K8S_NAMESPACE"); v != "" && !cmd.Flags().Changed("namespace") {
 		cfg.Namespace = v
 	}
-	if v := os.Getenv("K8S_LOGS_SINCE_SECONDS"); v != "" {
+	if v := os.Getenv("K8S_LOGS_SINCE_SECONDS"); v != "" && !cmd.Flags().Changed("k8s-since-seconds") {
 		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
 			cfg.K8sLogsSinceSeconds = parsed
+		} else {
+			log.WithError(err).Warn("K8S_LOGS_SINCE_SECONDS is not a valid integer, ignoring")
 		}
 	}
 }

@@ -74,7 +74,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 		}
 
 		// response of GET request on the root of the Admin
-		root, err := client.RootJSON(context.Background())
+		root, err := client.RootJSON(ctx)
 		if err != nil {
 			log.WithError(err).Warn("Failed to get root JSON from Kong, skipping KDD collection")
 			return filesToZip, nil
@@ -88,19 +88,19 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 		}
 
 		// Get the status and list of workspaces
-		status, err := getEndpoint(client, "/status")
+		status, err := getEndpoint(ctx, client, "/status")
 		if err != nil {
 			log.WithError(err).Warn("Failed to get status endpoint")
 		}
 
-		workspaces, err := getWorkspaces(client)
+		workspaces, err := getWorkspaces(ctx, client)
 		if err != nil {
 			log.WithError(err).Warn("Failed to get workspaces, skipping KDD collection")
 			return filesToZip, nil
 		}
 
 		// Get the license report
-		licenseReport, err := getEndpoint(client, "/license/report")
+		licenseReport, err := getEndpoint(ctx, client, "/license/report")
 		if err != nil {
 			log.WithError(err).Warn("Failed to get license report")
 		}
@@ -191,7 +191,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 				wsClient.SetWorkspace(workspace.Name)
 
 				// Queries all the entities using client and returns all the entities in KongRawState.
-				d, err := dump.Get(context.Background(), wsClient, dump.Config{
+				d, err := dump.Get(ctx, wsClient, dump.Config{
 					RBACResourcesOnly: false,
 					SkipConsumers:     false,
 				})
@@ -278,7 +278,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 		kddJSONPath := filepath.Join(workDir, "KDD.json")
 		err = os.WriteFile(kddJSONPath, jsonBytes, 0600)
 		if err != nil {
-			log.WithError(err).Fatal("Error writing KDD.json")
+			log.WithError(err).Error("Error writing KDD.json")
 			return filesToZip, err
 		}
 
@@ -430,7 +430,7 @@ func CollectKDD(ctx context.Context, cfg *Config, workDir string) ([]string, err
 	kddJSONPath := filepath.Join(workDir, "KDD.json")
 	err = os.WriteFile(kddJSONPath, jsonBytes, 0600)
 	if err != nil {
-		log.WithError(err).Fatal("Error writing KDD.json")
+		log.WithError(err).Error("Error writing KDD.json")
 		return filesToZip, err
 	}
 
@@ -557,13 +557,13 @@ func sanitizeRootConfig(config objx.Map, sanitizeConfigs bool) objx.Map {
 }
 
 // getEndpoint retrieves data from a Kong Admin API endpoint.
-func getEndpoint(client *kong.Client, endpoint string) (objx.Map, error) {
+func getEndpoint(ctx context.Context, client *kong.Client, endpoint string) (objx.Map, error) {
 	req, err := client.NewRequest("GET", endpoint, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	oReturn, err := getObjx(req, client)
+	oReturn, err := getObjx(ctx, req, client)
 	if err != nil {
 		return nil, err
 	}
@@ -572,8 +572,8 @@ func getEndpoint(client *kong.Client, endpoint string) (objx.Map, error) {
 }
 
 // getObjx performs an HTTP request and returns the response as an objx.Map.
-func getObjx(req *http.Request, client *kong.Client) (objx.Map, error) {
-	resp, err := client.DoRAW(context.Background(), req)
+func getObjx(ctx context.Context, req *http.Request, client *kong.Client) (objx.Map, error) {
+	resp, err := client.DoRAW(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -594,14 +594,14 @@ func getObjx(req *http.Request, client *kong.Client) (objx.Map, error) {
 }
 
 // getWorkspaces retrieves the list of workspaces from Kong.
-func getWorkspaces(client *kong.Client) (*Workspaces, error) {
+func getWorkspaces(ctx context.Context, client *kong.Client) (*Workspaces, error) {
 	req, err := client.NewRequest("GET", "/workspaces", nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	var w Workspaces
-	_, err = client.Do(context.Background(), req, &w)
+	_, err = client.Do(ctx, req, &w)
 	if err != nil {
 		return nil, err
 	}

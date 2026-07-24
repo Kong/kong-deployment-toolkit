@@ -22,8 +22,6 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	// kongv1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1"
-	// kongv1beta1 "github.com/kong/kubernetes-ingress-controller/v2/pkg/apis/configuration/v1beta1"
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -32,8 +30,6 @@ var rootCmd = &cobra.Command{
 	Short:  "Kong debug tool",
 	Long:   `A tool for extracting logs, metrics and configuration data from your kong instances.`,
 	PreRun: toggleDebug,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

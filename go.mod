@@ -7,7 +7,6 @@ require (
 	github.com/kong/deck v1.55.0
 	github.com/kong/go-database-reconciler v1.31.0
 	github.com/kong/go-kong v0.71.0
-	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/shirou/gopsutil/v4 v4.24.12
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
@@ -133,9 +132,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.7.0 // indirect
 	sigs.k8s.io/yaml v1.5.0 // indirect
 )
-
-replace github.com/googleapis/gnostic@v0.5.5 => github.com/google/gnostic-models v0.6.8
-
-replace github.com/googleapis/gnostic@v0.5.1 => github.com/google/gnostic-models v0.6.8
-
-replace github.com/googleapis/gnostic@v0.4.1 => github.com/google/gnostic-models v0.6.8

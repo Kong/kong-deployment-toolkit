@@ -146,7 +146,7 @@ func (c *Config) WithDefaults() *Config {
 	if len(result.TargetImages) == 0 {
 		result.TargetImages = []string{"kong-gateway", "kubernetes-ingress-controller"}
 	}
-	if result.LineLimit == 0 {
+	if result.LineLimit <= 0 {
 		result.LineLimit = 1000
 	}
 	if result.PrefixDir == "" {

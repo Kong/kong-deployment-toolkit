@@ -94,7 +94,7 @@ func CollectKubernetes(ctx context.Context, cfg *Config, workDir string) ([]stri
 	for _, p := range pl.Items {
 		if len(targetPods) > 0 {
 			for _, podName := range targetPods {
-				if strings.ToLower(podName) == strings.ToLower(p.Name) {
+				if strings.EqualFold(podName, p.Name) {
 					for _, c := range p.Spec.Containers {
 						for _, i := range cfg.TargetImages {
 							if strings.Contains(c.Image, i) {

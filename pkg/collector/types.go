@@ -98,8 +98,9 @@ type ProcessInfo struct {
 	Name       string
 	PID        int32
 	CPUPercent string
-	MemPercent uint64
-	CmdLine    string
+	// RSSBytes is the process's resident set size, in bytes (not a percentage).
+	RSSBytes uint64
+	CmdLine  string
 }
 
 // NetworkInfo contains network connection information.
@@ -243,37 +244,47 @@ type Status struct {
 	ConfigurationHash string `json:"configuration_hash,omitempty" yaml:"configuration_hash,omitempty"`
 }
 
+// WorkspaceConfig contains a Kong workspace's configuration, primarily developer
+// portal settings.
+type WorkspaceConfig struct {
+	Meta                      interface{} `json:"meta"`
+	Portal                    bool        `json:"portal"`
+	PortalAccessRequestEmail  interface{} `json:"portal_access_request_email"`
+	PortalApprovedEmail       interface{} `json:"portal_approved_email"`
+	PortalAuth                interface{} `json:"portal_auth"`
+	PortalAuthConf            interface{} `json:"portal_auth_conf"`
+	PortalAutoApprove         interface{} `json:"portal_auto_approve"`
+	PortalCorsOrigins         interface{} `json:"portal_cors_origins"`
+	PortalDeveloperMetaFields string      `json:"portal_developer_meta_fields"`
+	PortalEmailsFrom          interface{} `json:"portal_emails_from"`
+	PortalEmailsReplyTo       interface{} `json:"portal_emails_reply_to"`
+	PortalInviteEmail         interface{} `json:"portal_invite_email"`
+	PortalIsLegacy            interface{} `json:"portal_is_legacy"`
+	PortalResetEmail          interface{} `json:"portal_reset_email"`
+	PortalResetSuccessEmail   interface{} `json:"portal_reset_success_email"`
+	PortalSessionConf         interface{} `json:"portal_session_conf"`
+	PortalTokenExp            interface{} `json:"portal_token_exp"`
+}
+
+// WorkspaceMeta contains display metadata for a Kong workspace.
+type WorkspaceMeta struct {
+	Color     string      `json:"color"`
+	Thumbnail interface{} `json:"thumbnail"`
+}
+
+// Workspace represents a single Kong workspace as returned by the Admin API.
+type Workspace struct {
+	Comment   interface{}     `json:"comment"`
+	Config    WorkspaceConfig `json:"config"`
+	CreatedAt int             `json:"created_at"`
+	ID        string          `json:"id"`
+	Meta      WorkspaceMeta   `json:"meta"`
+	Name      string          `json:"name"`
+}
+
 // Workspaces contains the list of Kong workspaces.
 type Workspaces struct {
-	Data []struct {
-		Comment interface{} `json:"comment"`
-		Config  struct {
-			Meta                      interface{} `json:"meta"`
-			Portal                    bool        `json:"portal"`
-			PortalAccessRequestEmail  interface{} `json:"portal_access_request_email"`
-			PortalApprovedEmail       interface{} `json:"portal_approved_email"`
-			PortalAuth                interface{} `json:"portal_auth"`
-			PortalAuthConf            interface{} `json:"portal_auth_conf"`
-			PortalAutoApprove         interface{} `json:"portal_auto_approve"`
-			PortalCorsOrigins         interface{} `json:"portal_cors_origins"`
-			PortalDeveloperMetaFields string      `json:"portal_developer_meta_fields"`
-			PortalEmailsFrom          interface{} `json:"portal_emails_from"`
-			PortalEmailsReplyTo       interface{} `json:"portal_emails_reply_to"`
-			PortalInviteEmail         interface{} `json:"portal_invite_email"`
-			PortalIsLegacy            interface{} `json:"portal_is_legacy"`
-			PortalResetEmail          interface{} `json:"portal_reset_email"`
-			PortalResetSuccessEmail   interface{} `json:"portal_reset_success_email"`
-			PortalSessionConf         interface{} `json:"portal_session_conf"`
-			PortalTokenExp            interface{} `json:"portal_token_exp"`
-		} `json:"config"`
-		CreatedAt int    `json:"created_at"`
-		ID        string `json:"id"`
-		Meta      struct {
-			Color     string      `json:"color"`
-			Thumbnail interface{} `json:"thumbnail"`
-		} `json:"meta"`
-		Name string `json:"name"`
-	} `json:"data"`
+	Data []Workspace `json:"data"`
 	Next interface{} `json:"next"`
 }
 

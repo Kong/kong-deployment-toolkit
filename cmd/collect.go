@@ -24,6 +24,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -89,6 +90,10 @@ var collectCmd = &cobra.Command{
 		// handled at the CLI layer so the library only uses Config values.
 		applyEnvVarOverrides(cmd, cfg)
 
+		if err := validateRuntime(cfg.Runtime); err != nil {
+			return err
+		}
+
 		// Run the collector
 		ctx := context.Background()
 		result, err := collector.Collect(ctx, cfg)
@@ -133,6 +138,20 @@ func init() {
 	collectCmd.PersistentFlags().BoolVarP(&sanitizeConfigs, "sanitize", "s", true, "Sanitize sensitive data in config dumps. Default: true.")
 	collectCmd.PersistentFlags().BoolVar(&tlsSkipVerify, "tls-skip-verify", false, "Skip TLS certificate verification when connecting to the Kong Admin API. WARNING: insecure, allows on-path interception of credentials. Default: false.")
 	collectCmd.PersistentFlags().StringVar(&caCertPath, "ca-cert", "", "Path to a PEM-encoded CA certificate bundle to verify the Kong Admin API's TLS certificate.")
+}
+
+// validateRuntime rejects a --runtime/KONG_RUNTIME value that isn't one of the
+// supported runtimes (or empty, for auto-detect), so a typo produces a clear
+// error immediately instead of surfacing as "runtime %q not supported" deeper
+// inside collector.Collect.
+func validateRuntime(runtime string) error {
+	switch runtime {
+	case "", collector.RuntimeDocker, collector.RuntimeKubernetes, collector.RuntimeVM:
+		return nil
+	default:
+		return fmt.Errorf("invalid --runtime %q: must be one of %q, %q, %q, or omitted to auto-detect",
+			runtime, collector.RuntimeDocker, collector.RuntimeKubernetes, collector.RuntimeVM)
+	}
 }
 
 // applyEnvVarOverrides applies environment variable overrides to the collector config.

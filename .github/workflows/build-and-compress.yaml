@@ -43,8 +43,17 @@ jobs:
       # issues; see SEC-02), so a hard-failing gate here would permanently red
       # this job. This step still surfaces genuinely fixable regressions in the
       # log for a human to act on.
+      #
+      # actions/setup-go registers a "go" problem matcher that turns any
+      # "file.go:line:col: message" line into a build-error annotation.
+      # govulncheck's own "Example traces found" lines happen to match that
+      # exact shape (e.g. "docker.go:69:38: collector.CollectDocker calls
+      # ..."), which previously surfaced as ~10 misleading red annotations on
+      # an otherwise green, passing job. Disable it for this step only.
       - name: Run govulncheck
-        run: govulncheck ./... || true
+        run: |
+          echo "::remove-matcher owner=go::"
+          govulncheck ./... || true
 
       - name: Build KDT
         run: |
